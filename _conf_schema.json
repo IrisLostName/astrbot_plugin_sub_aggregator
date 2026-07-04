@@ -1,0 +1,209 @@
+{
+  "subscription_sources": {
+    "type": "template_list",
+    "description": "机场订阅源",
+    "hint": "按列表顺序拉取并合并。可在这里新增多个机场订阅 URL。",
+    "templates": {
+      "source": {
+        "name": "订阅源",
+        "hint": "一个机场订阅 URL。",
+        "display_item": "name",
+        "items": {
+          "name": {
+            "description": "名称",
+            "type": "string",
+            "default": "airport"
+          },
+          "url": {
+            "description": "订阅 URL",
+            "type": "string",
+            "default": ""
+          },
+          "priority": {
+            "description": "优先级",
+            "type": "int",
+            "hint": "数字越小越靠前，例如 1、2、3、4。相同优先级时按配置列表原顺序处理。",
+            "default": 100
+          },
+          "user_agent": {
+            "description": "该订阅单独使用的 UA",
+            "type": "string",
+            "hint": "留空则使用全局 UA。可填 mihomo/1.19.27、ClashMeta、Karing/1.2.21.2406 platform/windows 等完整 UA。",
+            "default": ""
+          },
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          }
+        }
+      }
+    }
+  },
+  "manual_node_sources": {
+    "type": "template_list",
+    "description": "手动节点源",
+    "hint": "用于粘贴自建或已经解密的 vless://、hysteria2://、trojan:// 等单条或多条节点。",
+    "templates": {
+      "manual_source": {
+        "name": "手动节点源",
+        "hint": "一组手动维护的节点链接。",
+        "display_item": "name",
+        "items": {
+          "name": {
+            "description": "名称",
+            "type": "string",
+            "hint": "会作为节点名前缀中的 [机场名/来源名]。",
+            "default": "manual"
+          },
+          "nodes": {
+            "description": "节点内容",
+            "type": "string",
+            "hint": "可粘贴单条或多条已解密节点链接，例如 vless://、hysteria2://，每行一条更清晰。",
+            "default": ""
+          },
+          "priority": {
+            "description": "优先级",
+            "type": "int",
+            "hint": "数字越小越靠前，例如 1、2、3、4。",
+            "default": 100
+          },
+          "user_agent": {
+            "description": "标记 UA",
+            "type": "string",
+            "hint": "手动节点不会发起请求，此项仅用于记录来源或未来扩展。可留空。",
+            "default": ""
+          },
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          }
+        }
+      }
+    }
+  },
+  "update_interval_minutes": {
+    "description": "更新间隔（分钟）",
+    "type": "int",
+    "hint": "默认 180 分钟，即每 3 小时拉取一次。",
+    "default": 180
+  },
+  "startup_push": {
+    "description": "开机时推送一次",
+    "type": "bool",
+    "default": true
+  },
+  "notify_on_node_change": {
+    "description": "节点变化时通知",
+    "type": "bool",
+    "default": true
+  },
+  "notify_on_error": {
+    "description": "失败时通知",
+    "type": "bool",
+    "default": true
+  },
+  "notify_targets": {
+    "description": "通知会话",
+    "type": "list",
+    "hint": "建议用 /subagg bind 自动写入当前 QQ 会话。",
+    "default": []
+  },
+  "user_agent_preset": {
+    "description": "全局 UA 预设",
+    "type": "string",
+    "hint": "可填：mihomo、clashmeta、clash、v2ray、flclash、karing、custom。默认 mihomo 通常更适合机场下发 Mihomo/Clash Meta 配置。",
+    "default": "mihomo"
+  },
+  "user_agent": {
+    "description": "自定义全局 UA",
+    "type": "string",
+    "hint": "当全局 UA 预设为 custom 时使用；也作为兼容旧配置的兜底值。",
+    "default": "mihomo/1.19.27"
+  },
+  "request_timeout_seconds": {
+    "description": "请求超时（秒）",
+    "type": "int",
+    "default": 20
+  },
+  "output_base64": {
+    "description": "输出为 Base64 订阅",
+    "type": "bool",
+    "hint": "仅在 output_format 为 auto/base64 且订阅源是传统节点链接时生效。Clash YAML 会自动输出 YAML。",
+    "default": true
+  },
+  "output_format": {
+    "description": "输出格式",
+    "type": "string",
+    "hint": "auto=自动判断；base64=传统 Base64 节点订阅；plain=明文节点链接；clash_yaml=Clash YAML 配置。",
+    "default": "auto"
+  },
+  "rule_profile": {
+    "description": "Clash YAML 分流规则模板",
+    "type": "string",
+    "hint": "mihomo_ruleset=推荐，使用远程 rule-providers；inline=无远程依赖的简化规则；basic=基础规则；none=不写分流规则并使用 global 模式。",
+    "default": "mihomo_ruleset"
+  },
+  "deduplicate_nodes": {
+    "description": "合并时去重",
+    "type": "bool",
+    "default": true
+  },
+  "save_local_files": {
+    "description": "保存聚合结果到本地文件",
+    "type": "bool",
+    "hint": "开启后每次刷新成功都会在插件目录下写出 merged-subscription.yaml/txt 等文件。",
+    "default": true
+  },
+  "local_output_dir": {
+    "description": "本地输出目录",
+    "type": "string",
+    "hint": "留空表示当前插件目录。你也可以填 /astrbot-napcat-bjiqg3/data/plugins/astrbot_plugin_sub_aggregator。",
+    "default": ""
+  },
+  "local_output_basename": {
+    "description": "本地输出文件名前缀",
+    "type": "string",
+    "hint": "默认生成 merged-subscription.yaml、merged-subscription.latest、merged-subscription.metadata.json。",
+    "default": "merged-subscription"
+  },
+  "http_enable": {
+    "description": "启用订阅 HTTP 出口",
+    "type": "bool",
+    "default": true
+  },
+  "http_host": {
+    "description": "HTTP 监听地址",
+    "type": "string",
+    "hint": "有公网 IP 时通常保持 0.0.0.0。",
+    "default": "0.0.0.0"
+  },
+  "http_port": {
+    "description": "HTTP 监听端口",
+    "type": "int",
+    "default": 8077
+  },
+  "public_base_url": {
+    "description": "公网访问地址",
+    "type": "string",
+    "hint": "例如 http://1.2.3.4:8077 或 https://sub.example.com。留空时会提示你补公网 IP/域名。",
+    "default": ""
+  },
+  "path_prefix": {
+    "description": "订阅短路径前缀",
+    "type": "string",
+    "default": "/sub"
+  },
+  "access_token": {
+    "description": "订阅访问 token",
+    "type": "string",
+    "hint": "留空会自动生成。泄露后请清空并重载插件重新生成。",
+    "default": ""
+  },
+  "max_change_names": {
+    "description": "变化通知最多展示节点名数量",
+    "type": "int",
+    "default": 8
+  }
+}

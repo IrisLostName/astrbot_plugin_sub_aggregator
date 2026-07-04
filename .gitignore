@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.log
+merged-subscription*.yaml
+merged-subscription*.txt
+merged-subscription*.latest
+merged-subscription*.json

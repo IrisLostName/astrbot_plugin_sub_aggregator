@@ -1,0 +1,11 @@
+name: astrbot_plugin_sub_aggregator
+display_name: 订阅聚合助手
+desc: 聚合多个机场订阅 URL，按顺序 Base64 解码后合并为一个总订阅 URL，并支持定时拉取与节点变化通知。
+short_desc: 多机场订阅聚合与变化通知。
+version: 0.1.0
+author: chenh
+repo: ""
+astrbot_version: ">=4.10.4,<5"
+support_platforms:
+  - qq_official
+  - qq_official_webhook
