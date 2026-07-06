@@ -1,6 +1,6 @@
 import base64
 
-from subagg_core import decode_subscription, merge_nodes, parse_nodes, tag_node_name
+from subagg_core import decode_subscription, merge_nodes, parse_nodes, sanitize_clash_proxy, tag_node_name
 
 
 def test_decode_base64_subscription():
@@ -93,3 +93,24 @@ def test_default_rule_profile_uses_remote_rule_providers():
     assert "RULE-SET,microsoft,Ⓜ️ 微软服务" in result.output_text
     assert "RULE-SET,openai,🤖 OpenAI" in result.output_text
     assert "RULE-SET,github,🛠️ 开发平台" in result.output_text
+
+
+def test_clash_reality_short_id_is_sanitized():
+    proxy = {
+        "name": "A",
+        "type": "vless",
+        "reality-opts": {"public-key": "pk", "short-id": 12345},
+        "xhttp-opts": {
+            "download-settings": {
+                "reality-opts": {"public-key": "nested-pk", "short-id": "not-a-hex-value"}
+            }
+        },
+        "grpc-opts": {"reality-opts": {"public-key": "grpc-pk", "short-id": None}},
+    }
+
+    sanitize_clash_proxy(proxy)
+
+    assert proxy["reality-opts"]["short-id"] == "012345"
+    assert isinstance(proxy["reality-opts"]["short-id"], str)
+    assert "short-id" not in proxy["xhttp-opts"]["download-settings"]["reality-opts"]
+    assert "short-id" not in proxy["grpc-opts"]["reality-opts"]

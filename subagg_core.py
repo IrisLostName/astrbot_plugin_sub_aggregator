@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import hashlib
 import json
 import re
@@ -33,6 +34,7 @@ NODE_URL_PATTERN = re.compile(
 EMOJI_PREFIX_PATTERN = re.compile(
     r"^((?:[\U0001F1E6-\U0001F1FF]{2}|[\U0001F300-\U0001FAFF]\ufe0f?|[\u2600-\u27BF]\ufe0f?|\s)+)"
 )
+REALITY_SHORT_ID_PATTERN = re.compile(r"^[0-9a-fA-F]{2,32}$")
 
 
 @dataclass(frozen=True)
@@ -248,10 +250,65 @@ def tag_node(node: NodeInfo, source: str) -> NodeInfo:
 
 
 def tag_clash_proxy(proxy: dict, source: str, index: int) -> dict:
-    tagged = dict(proxy)
+    tagged = deepcopy(proxy)
     original = str(tagged.get("name") or f"{source}#{index}")
     tagged["name"] = tag_node_name(original, source)
+    sanitize_clash_proxy(tagged)
     return tagged
+
+
+def sanitize_clash_proxy(proxy: dict) -> dict:
+    """Make provider YAML tolerant of malformed REALITY short-id values."""
+    _sanitize_reality_opts_recursive(proxy)
+    return proxy
+
+
+def _sanitize_reality_opts_recursive(value) -> None:
+    if isinstance(value, dict):
+        if isinstance(value.get("reality-opts"), dict):
+            _sanitize_reality_opts(value["reality-opts"])
+        for item in value.values():
+            _sanitize_reality_opts_recursive(item)
+    elif isinstance(value, list):
+        for item in value:
+            _sanitize_reality_opts_recursive(item)
+
+
+def _sanitize_reality_opts(reality_opts: dict) -> None:
+    if "short_id" in reality_opts and "short-id" not in reality_opts:
+        reality_opts["short-id"] = reality_opts.pop("short_id")
+
+    if "short-id" not in reality_opts:
+        return
+
+    normalized = _normalize_reality_short_id(reality_opts.get("short-id"))
+    if normalized is None:
+        reality_opts.pop("short-id", None)
+    else:
+        reality_opts["short-id"] = normalized
+
+
+def _normalize_reality_short_id(value) -> str | None:
+    if value is None or isinstance(value, bool):
+        return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    if text.lower().startswith("0x"):
+        text = text[2:]
+    text = re.sub(r"[\s:_-]+", "", text)
+
+    if not text or re.search(r"[^0-9a-fA-F]", text):
+        return None
+    if len(text) > 32:
+        return None
+    if len(text) % 2 == 1:
+        text = "0" + text
+    if not REALITY_SHORT_ID_PATTERN.match(text):
+        return None
+    return text.lower()
 
 
 def tag_node_name(name: str, source: str) -> str:
