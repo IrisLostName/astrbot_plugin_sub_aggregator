@@ -7,7 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 from typing import Iterable
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import quote, urlencode, unquote, urlsplit
 
 try:
     import yaml
@@ -167,6 +167,9 @@ def merge_nodes(
                         source=source,
                     )
                 )
+                v2ray_uri = clash_proxy_to_v2ray_uri(tagged_proxy)
+                if v2ray_uri:
+                    v2ray_links.append(v2ray_uri)
             continue
 
         for node in parse_nodes(subscription_text, source):
@@ -263,6 +266,19 @@ def sanitize_clash_proxy(proxy: dict) -> dict:
     return proxy
 
 
+def clash_proxy_to_v2ray_uri(proxy: dict) -> str:
+    proxy_type = str(proxy.get("type") or "").strip().lower()
+    if proxy_type in {"vless", "trojan"}:
+        return _build_vless_or_trojan_uri(proxy, proxy_type)
+    if proxy_type == "vmess":
+        return _build_vmess_uri(proxy)
+    if proxy_type == "ss":
+        return _build_ss_uri(proxy)
+    if proxy_type in {"hysteria2", "hy2"}:
+        return _build_hysteria2_uri(proxy)
+    return ""
+
+
 def _sanitize_reality_opts_recursive(value) -> None:
     if isinstance(value, dict):
         if isinstance(value.get("reality-opts"), dict):
@@ -309,6 +325,160 @@ def _normalize_reality_short_id(value) -> str | None:
     if not REALITY_SHORT_ID_PATTERN.match(text):
         return None
     return text.lower()
+
+
+def _build_vless_or_trojan_uri(proxy: dict, scheme: str) -> str:
+    server = _required_proxy_text(proxy, "server")
+    port = _required_proxy_text(proxy, "port")
+    credential_key = "uuid" if scheme == "vless" else "password"
+    credential = _required_proxy_text(proxy, credential_key)
+    if not server or not port or not credential:
+        return ""
+
+    params = _common_v2ray_params(proxy)
+    if scheme == "vless":
+        params.setdefault("encryption", str(proxy.get("encryption") or "none"))
+    return _build_uri(scheme, credential, server, port, params, str(proxy.get("name") or ""))
+
+
+def _build_hysteria2_uri(proxy: dict) -> str:
+    server = _required_proxy_text(proxy, "server")
+    port = _required_proxy_text(proxy, "port")
+    password = _required_proxy_text(proxy, "password")
+    if not server or not port or not password:
+        return ""
+
+    params: dict[str, str] = {}
+    _add_param(params, "sni", proxy.get("sni") or proxy.get("servername"))
+    if proxy.get("skip-cert-verify") is True:
+        params["insecure"] = "1"
+    _add_param(params, "obfs", proxy.get("obfs"))
+    _add_param(params, "obfs-password", proxy.get("obfs-password"))
+    _add_param(params, "alpn", _join_if_list(proxy.get("alpn")))
+    return _build_uri("hysteria2", password, server, port, params, str(proxy.get("name") or ""))
+
+
+def _build_ss_uri(proxy: dict) -> str:
+    server = _required_proxy_text(proxy, "server")
+    port = _required_proxy_text(proxy, "port")
+    cipher = _required_proxy_text(proxy, "cipher")
+    password = _required_proxy_text(proxy, "password")
+    if not server or not port or not cipher or not password:
+        return ""
+
+    userinfo = base64.urlsafe_b64encode(f"{cipher}:{password}".encode("utf-8")).decode("ascii").rstrip("=")
+    params: dict[str, str] = {}
+    _add_param(params, "plugin", proxy.get("plugin"))
+    _add_param(params, "plugin-opts", proxy.get("plugin-opts"))
+    return _build_uri("ss", userinfo, server, port, params, str(proxy.get("name") or ""))
+
+
+def _build_vmess_uri(proxy: dict) -> str:
+    server = _required_proxy_text(proxy, "server")
+    port = _required_proxy_text(proxy, "port")
+    uuid = _required_proxy_text(proxy, "uuid")
+    if not server or not port or not uuid:
+        return ""
+
+    network = str(proxy.get("network") or "tcp")
+    ws_opts = proxy.get("ws-opts") if isinstance(proxy.get("ws-opts"), dict) else {}
+    grpc_opts = proxy.get("grpc-opts") if isinstance(proxy.get("grpc-opts"), dict) else {}
+    headers = ws_opts.get("headers") if isinstance(ws_opts.get("headers"), dict) else {}
+    tls = "tls" if proxy.get("tls") is True else ""
+    data = {
+        "v": "2",
+        "ps": str(proxy.get("name") or ""),
+        "add": server,
+        "port": port,
+        "id": uuid,
+        "aid": str(proxy.get("alterId") if proxy.get("alterId") is not None else proxy.get("alter-id") or 0),
+        "scy": str(proxy.get("cipher") or "auto"),
+        "net": network,
+        "type": str(proxy.get("http-opts", {}).get("method") or "none")
+        if isinstance(proxy.get("http-opts"), dict)
+        else "none",
+        "host": str(headers.get("Host") or headers.get("host") or proxy.get("servername") or ""),
+        "path": str(ws_opts.get("path") or grpc_opts.get("grpc-service-name") or ""),
+        "tls": tls,
+        "sni": str(proxy.get("servername") or proxy.get("sni") or ""),
+        "alpn": _join_if_list(proxy.get("alpn")),
+        "fp": str(proxy.get("client-fingerprint") or ""),
+    }
+    encoded = base64.b64encode(json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    return "vmess://" + encoded.decode("ascii")
+
+
+def _common_v2ray_params(proxy: dict) -> dict[str, str]:
+    params: dict[str, str] = {}
+    reality_opts = proxy.get("reality-opts") if isinstance(proxy.get("reality-opts"), dict) else {}
+    network = str(proxy.get("network") or "tcp")
+
+    if reality_opts:
+        params["security"] = "reality"
+        _add_param(params, "pbk", reality_opts.get("public-key"))
+        _add_param(params, "sid", reality_opts.get("short-id"))
+        _add_param(params, "spx", reality_opts.get("spider-x"))
+    elif proxy.get("tls") is True:
+        params["security"] = "tls"
+    else:
+        params["security"] = "none"
+
+    _add_param(params, "type", network)
+    _add_param(params, "flow", proxy.get("flow"))
+    _add_param(params, "sni", proxy.get("servername") or proxy.get("sni"))
+    _add_param(params, "fp", proxy.get("client-fingerprint"))
+    _add_param(params, "alpn", _join_if_list(proxy.get("alpn")))
+    if proxy.get("skip-cert-verify") is True:
+        params["allowInsecure"] = "1"
+
+    ws_opts = proxy.get("ws-opts") if isinstance(proxy.get("ws-opts"), dict) else {}
+    grpc_opts = proxy.get("grpc-opts") if isinstance(proxy.get("grpc-opts"), dict) else {}
+    http_opts = proxy.get("http-opts") if isinstance(proxy.get("http-opts"), dict) else {}
+    xhttp_opts = proxy.get("xhttp-opts") if isinstance(proxy.get("xhttp-opts"), dict) else {}
+
+    headers = ws_opts.get("headers") if isinstance(ws_opts.get("headers"), dict) else {}
+    _add_param(params, "path", ws_opts.get("path") or http_opts.get("path") or xhttp_opts.get("path"))
+    _add_param(params, "host", headers.get("Host") or headers.get("host") or xhttp_opts.get("host"))
+    _add_param(params, "serviceName", grpc_opts.get("grpc-service-name"))
+    _add_param(params, "mode", xhttp_opts.get("mode"))
+    return params
+
+
+def _build_uri(scheme: str, userinfo: str, server: str, port: str, params: dict[str, str], name: str) -> str:
+    query = urlencode(params, doseq=False, safe="/:,")
+    suffix = f"?{query}" if query else ""
+    return f"{scheme}://{quote(str(userinfo), safe='')}@{_format_uri_host(server)}:{port}{suffix}#{quote(name, safe='')}"
+
+
+def _format_uri_host(server: str) -> str:
+    if ":" in server and not server.startswith("[") and not server.endswith("]"):
+        return f"[{server}]"
+    return server
+
+
+def _required_proxy_text(proxy: dict, key: str) -> str:
+    value = proxy.get(key)
+    if value is None or isinstance(value, bool):
+        return ""
+    return str(value).strip()
+
+
+def _add_param(params: dict[str, str], key: str, value) -> None:
+    if value is None or isinstance(value, bool):
+        return
+    if isinstance(value, (list, tuple)):
+        value = _join_if_list(value)
+    text = str(value).strip()
+    if text:
+        params[key] = text
+
+
+def _join_if_list(value) -> str:
+    if isinstance(value, (list, tuple)):
+        return ",".join(str(item).strip() for item in value if str(item).strip())
+    if value is None:
+        return ""
+    return str(value).strip()
 
 
 def tag_node_name(name: str, source: str) -> str:

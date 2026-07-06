@@ -1,6 +1,13 @@
 import base64
 
-from subagg_core import decode_subscription, merge_nodes, parse_nodes, sanitize_clash_proxy, tag_node_name
+from subagg_core import (
+    clash_proxy_to_v2ray_uri,
+    decode_subscription,
+    merge_nodes,
+    parse_nodes,
+    sanitize_clash_proxy,
+    tag_node_name,
+)
 
 
 def test_decode_base64_subscription():
@@ -67,6 +74,43 @@ def test_v2ray_export_for_plain_links():
     assert result.v2ray_base64
     decoded = base64.b64decode(result.v2ray_base64).decode()
     assert "vless://uuid@example.com:443#%5Bairport%5DNode" in decoded
+
+
+def test_v2ray_export_for_clash_yaml_links():
+    yaml_text = (
+        "proxies:\n"
+        "  - {name: A, type: ss, server: example.com, port: 443, cipher: aes-128-gcm, password: p}\n"
+    )
+
+    result = merge_nodes([("airport", yaml_text)], [], output_format="clash_yaml")
+
+    decoded = base64.b64decode(result.v2ray_base64).decode()
+    assert decoded.startswith("ss://")
+    assert "#%5Bairport%5DA" in decoded
+
+
+def test_clash_vless_reality_proxy_converts_to_v2ray_uri():
+    proxy = {
+        "name": "[airport]A",
+        "type": "vless",
+        "server": "example.com",
+        "port": 443,
+        "uuid": "00000000-0000-0000-0000-000000000000",
+        "network": "tcp",
+        "tls": True,
+        "servername": "www.microsoft.com",
+        "client-fingerprint": "chrome",
+        "reality-opts": {"public-key": "pk", "short-id": 12345, "spider-x": "/"},
+    }
+
+    sanitize_clash_proxy(proxy)
+    uri = clash_proxy_to_v2ray_uri(proxy)
+
+    assert uri.startswith("vless://00000000-0000-0000-0000-000000000000@example.com:443?")
+    assert "security=reality" in uri
+    assert "pbk=pk" in uri
+    assert "sid=012345" in uri
+    assert "#%5Bairport%5DA" in uri
 
 
 def test_rule_profile_none_uses_global_mode_without_rules():
