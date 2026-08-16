@@ -4,7 +4,7 @@ import asyncio
 import json
 import secrets
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin
@@ -16,18 +16,20 @@ from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 
 try:
-    from .subagg_core import decode_subscription, merge_nodes, summarize_changes
+    from .src.subagg_core import NodeInfo, decode_subscription, merge_nodes, summarize_changes
 except ImportError:
-    from subagg_core import decode_subscription, merge_nodes, summarize_changes
+    try:
+        from src.subagg_core import NodeInfo, decode_subscription, merge_nodes, summarize_changes
+    except ImportError:
+        from subagg_core import NodeInfo, decode_subscription, merge_nodes, summarize_changes
 
 
 PLUGIN_NAME = "astrbot_plugin_sub_aggregator"
 KV_LAST_FINGERPRINTS = "last_node_fingerprints"
+KV_LAST_NODE_SNAPSHOT = "last_node_snapshot"
 KV_LAST_OUTPUT = "last_subscription_output"
 KV_LAST_OUTPUT_FORMAT = "last_subscription_output_format"
 KV_LAST_OUTPUT_FILE = "last_subscription_output_file"
-KV_LAST_V2RAY_OUTPUT = "last_v2ray_subscription_output"
-KV_LAST_V2RAY_FILE = "last_v2ray_subscription_file"
 KV_LAST_NODE_COUNT = "last_node_count"
 KV_LAST_REFRESH_AT = "last_refresh_at"
 
@@ -37,7 +39,6 @@ UA_PRESETS = {
     "clash-meta": "ClashMeta",
     "clash": "ClashforWindows/0.20.39",
     "clashforwindows": "ClashforWindows/0.20.39",
-    "v2ray": "v2rayN/6.60",
     "flclash": "FLClash",
     "karing": "Karing/1.2.21.2406 platform/windows",
     "custom": "",
@@ -59,7 +60,7 @@ def subagg():
     PLUGIN_NAME,
     "chenh",
     "聚合多个机场订阅 URL，并通过固定短路径输出一个总订阅链接。",
-    "0.1.0",
+    "0.3.0",
 )
 class SubAggregatorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
@@ -71,24 +72,33 @@ class SubAggregatorPlugin(Star):
         self._web_site: web.TCPSite | None = None
         self._refresh_lock = asyncio.Lock()
         self._http_last_error = ""
+        self._refresh_last_error = ""
+        self._refresh_next_at = ""
+        self._stopping = False
         self._ensure_token()
 
     async def terminate(self):
+        self._stopping = True
         if self._refresh_task:
             self._refresh_task.cancel()
             await asyncio.gather(self._refresh_task, return_exceptions=True)
         if self._web_runner:
             await self._web_runner.cleanup()
+        self._web_runner = None
+        self._web_site = None
         if self._session:
             await self._session.close()
 
     @filter.on_astrbot_loaded()
     async def on_astrbot_loaded(self):
+        self._stopping = False
         await self._try_ensure_http_server()
-        self._refresh_task = asyncio.create_task(self._refresh_loop())
-        if self.config.get("startup_push", True):
-            await self.refresh_and_notify(reason="AstrBot 已启动", send_url=True)
-
+        await self._start_refresh_task()
+        # 启动后立即刷新；startup_push 只控制是否把启动结果推送到通知会话。
+        await self.refresh_and_notify(
+            reason="AstrBot 已启动",
+            send_url=bool(self.config.get("startup_push", True)),
+        )
     @subagg.command("help")
     async def help_cmd(self, event: AstrMessageEvent):
         yield event.plain_result(
@@ -125,6 +135,13 @@ class SubAggregatorPlugin(Star):
         last_refresh_at = await self.get_kv_data(KV_LAST_REFRESH_AT, "从未刷新")
         output_format = await self.get_kv_data(KV_LAST_OUTPUT_FORMAT, "未知")
         node_count = await self.get_kv_data(KV_LAST_NODE_COUNT, 0)
+        interval = self._update_interval_minutes()
+        if self._refresh_task and not self._refresh_task.done():
+            refresh_task_state = "运行中"
+        elif self._refresh_task and self._refresh_task.cancelled():
+            refresh_task_state = "已取消"
+        else:
+            refresh_task_state = "已停止"
         http_state = "已启用" if self.config.get("http_enable", True) else "未启用"
         runner_state = "已启动" if self._web_runner else "未启动"
         http_error = self._http_last_error or "无"
@@ -133,14 +150,15 @@ class SubAggregatorPlugin(Star):
             f"HTTP 出口：{http_state}，服务：{runner_state}\n"
             f"HTTP 错误：{http_error}\n"
             f"监听：{self.config.get('http_host', '0.0.0.0')}:{self.config.get('http_port', 8077)}\n"
-            f"健康检查：{self._health_url()}\n"
             f"订阅链接：{self._public_subscription_url()}\n"
-            f"v2ray 订阅：{self._public_v2ray_url()}\n"
             f"最近刷新：{last_refresh_at}\n"
+            f"定时任务：{refresh_task_state}\n"
+            f"更新间隔：{interval} 分钟\n"
+            f"下次刷新：{self._refresh_next_at or '未排程'}\n"
+            f"定时任务错误：{self._refresh_last_error or '无'}\n"
             f"节点数量：{node_count}\n"
             f"输出格式：{output_format}\n"
             f"本地文件：{await self.get_kv_data(KV_LAST_OUTPUT_FILE, '尚未生成')}\n"
-            f"v2ray 文件：{await self.get_kv_data(KV_LAST_V2RAY_FILE, '尚未生成')}\n"
             f"全局 UA：{self._resolve_user_agent()}"
         )
 
@@ -221,8 +239,9 @@ class SubAggregatorPlugin(Star):
 
     async def _refresh_once(self) -> dict[str, Any]:
         sources = self._sources()
-        if not sources:
-            raise RuntimeError("没有启用的机场订阅 URL")
+        manual_sources = self._manual_node_sources()
+        if not sources and not manual_sources:
+            raise RuntimeError("没有启用的机场订阅 URL 或手动节点源")
 
         fetched: list[FetchResult] = []
         failures: list[str] = []
@@ -237,7 +256,7 @@ class SubAggregatorPlugin(Star):
                 failures.append(f"{name}: {exc}")
                 logger.exception("拉取订阅失败：%s", name)
 
-        fetched.extend(self._manual_node_sources())
+        fetched.extend(manual_sources)
 
         if not fetched:
             message = "没有成功加载任何订阅或手动节点"
@@ -253,6 +272,7 @@ class SubAggregatorPlugin(Star):
             output_base64=bool(self.config.get("output_base64", True)),
             output_format=str(self.config.get("output_format") or "auto"),
             rule_profile=str(self.config.get("rule_profile") or "mihomo_ruleset"),
+            previous_nodes=await self._load_previous_nodes(),
         )
         if not merge.nodes:
             raise RuntimeError("订阅拉取成功，但没有解析到支持的节点。请确认订阅不是页面、过期提示或需要特殊 UA。")
@@ -261,17 +281,15 @@ class SubAggregatorPlugin(Star):
         output_file = self._save_output_files(
             merge.output_text,
             output_format=merge.output_format,
-            v2ray_base64=merge.v2ray_base64,
             node_count=len(merge.nodes),
             refreshed_at=refreshed_at,
         )
 
         await self.put_kv_data(KV_LAST_FINGERPRINTS, [node.fingerprint for node in merge.nodes])
+        await self.put_kv_data(KV_LAST_NODE_SNAPSHOT, [node.__dict__ for node in merge.nodes])
         await self.put_kv_data(KV_LAST_OUTPUT, merge.output_text)
         await self.put_kv_data(KV_LAST_OUTPUT_FORMAT, merge.output_format)
         await self.put_kv_data(KV_LAST_OUTPUT_FILE, output_file)
-        await self.put_kv_data(KV_LAST_V2RAY_OUTPUT, merge.v2ray_base64)
-        await self.put_kv_data(KV_LAST_V2RAY_FILE, self._v2ray_output_file_path())
         await self.put_kv_data(KV_LAST_NODE_COUNT, len(merge.nodes))
         await self.put_kv_data(KV_LAST_REFRESH_AT, refreshed_at)
 
@@ -281,7 +299,8 @@ class SubAggregatorPlugin(Star):
         change_message = summarize_changes(
             merge.added,
             merge.removed,
-            max_names=int(self.config.get("max_change_names", 8)),
+            updated=merge.updated,
+            max_names=min(50, max(1, int(self.config.get("max_change_names", 50)))),
         )
         return {
             "nodes": merge.nodes,
@@ -301,10 +320,52 @@ class SubAggregatorPlugin(Star):
 
     async def _refresh_loop(self):
         while True:
-            minutes = max(1, int(self.config.get("update_interval_minutes", 180)))
-            await asyncio.sleep(minutes * 60)
-            await self.refresh_and_notify(reason="定时刷新")
+            try:
+                minutes = self._update_interval_minutes()
+                self._refresh_next_at = (
+                    datetime.now() + timedelta(minutes=minutes)
+                ).isoformat(timespec="seconds")
+                await asyncio.sleep(minutes * 60)
+                self._refresh_next_at = ""
+                await self.refresh_and_notify(reason="定时刷新")
+                self._refresh_last_error = ""
+            except asyncio.CancelledError:
+                self._refresh_next_at = ""
+                raise
+            except Exception as exc:
+                self._refresh_last_error = f"{type(exc).__name__}: {exc}"
+                logger.exception("订阅聚合定时刷新任务异常，5 秒后继续运行")
+                await asyncio.sleep(5)
 
+    async def _start_refresh_task(self):
+        if self._refresh_task and not self._refresh_task.done():
+            self._refresh_task.cancel()
+            await asyncio.gather(self._refresh_task, return_exceptions=True)
+        self._refresh_task = asyncio.create_task(self._refresh_loop())
+        self._refresh_task.add_done_callback(self._refresh_task_done)
+
+    def _refresh_task_done(self, task: asyncio.Task):
+        if self._stopping or task is not self._refresh_task:
+            return
+        if task.cancelled():
+            return
+        try:
+            error = task.exception()
+        except asyncio.CancelledError:
+            return
+        if error is None:
+            return
+        self._refresh_last_error = f"{type(error).__name__}: {error}"
+        logger.error("订阅聚合定时任务意外结束，将自动重建：%s", self._refresh_last_error)
+        self._refresh_task = asyncio.create_task(self._refresh_loop())
+        self._refresh_task.add_done_callback(self._refresh_task_done)
+
+    def _update_interval_minutes(self) -> int:
+        try:
+            return max(1, int(self.config.get("update_interval_minutes", 180)))
+        except (TypeError, ValueError):
+            self._refresh_last_error = "更新间隔配置无效，已回退为 180 分钟"
+            return 180
     async def _client(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
             self._session = aiohttp.ClientSession()
@@ -317,8 +378,6 @@ class SubAggregatorPlugin(Star):
         if self._web_runner:
             return
         app = web.Application()
-        app.router.add_get(self._health_path(), self._handle_health)
-        app.router.add_get(self._v2ray_path(), self._handle_v2ray_subscription)
         app.router.add_get(self._subscription_path(), self._handle_subscription)
         self._web_runner = web.AppRunner(app)
         await self._web_runner.setup()
@@ -359,28 +418,26 @@ class SubAggregatorPlugin(Star):
             headers={"subscription-userinfo": "upload=0; download=0; total=0; expire=0"},
         )
 
-    async def _handle_health(self, request: web.Request) -> web.Response:
-        return web.json_response(
-            {
-                "status": "ok",
-                "plugin": PLUGIN_NAME,
-                "last_refresh_at": await self.get_kv_data(KV_LAST_REFRESH_AT, ""),
-                "node_count": await self.get_kv_data(KV_LAST_NODE_COUNT, 0),
-                "output_format": await self.get_kv_data(KV_LAST_OUTPUT_FORMAT, ""),
-                "output_file": await self.get_kv_data(KV_LAST_OUTPUT_FILE, ""),
-                "v2ray_file": await self.get_kv_data(KV_LAST_V2RAY_FILE, ""),
-            }
-        )
-
-    async def _handle_v2ray_subscription(self, request: web.Request) -> web.Response:
-        token = request.match_info.get("token", "")
-        if token != self.config.get("access_token"):
-            return web.Response(status=404, text="not found")
-        output = await self.get_kv_data(KV_LAST_V2RAY_OUTPUT, "")
-        if not output:
-            await self.refresh_and_notify(reason="首次访问刷新")
-            output = await self.get_kv_data(KV_LAST_V2RAY_OUTPUT, "")
-        return web.Response(text=output, content_type="text/plain", charset="utf-8")
+    async def _load_previous_nodes(self) -> list[NodeInfo]:
+        snapshot = await self.get_kv_data(KV_LAST_NODE_SNAPSHOT, [])
+        if not isinstance(snapshot, list):
+            return []
+        nodes: list[NodeInfo] = []
+        for item in snapshot:
+            if not isinstance(item, dict):
+                continue
+            try:
+                nodes.append(
+                    NodeInfo(
+                        raw=str(item.get("raw") or ""),
+                        name=str(item.get("name") or ""),
+                        fingerprint=str(item.get("fingerprint") or ""),
+                        source=str(item.get("source") or ""),
+                    )
+                )
+            except Exception:
+                continue
+        return nodes
 
     def _sources(self) -> list[dict[str, Any]]:
         sources = [
@@ -441,7 +498,6 @@ class SubAggregatorPlugin(Star):
         output: str,
         *,
         output_format: str,
-        v2ray_base64: str,
         node_count: int,
         refreshed_at: str,
     ) -> str:
@@ -450,25 +506,17 @@ class SubAggregatorPlugin(Star):
 
         output_dir = self._local_output_dir()
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        basename = str(self.config.get("local_output_basename") or "merged-subscription").strip()
-        if not basename:
-            basename = "merged-subscription"
-
+        basename = str(self.config.get("local_output_basename") or "merged-subscription").strip() or "merged-subscription"
         suffix = {
             "clash_yaml": ".yaml",
             "base64": ".base64.txt",
             "plain": ".txt",
         }.get(output_format, ".txt")
-
         output_path = output_dir / f"{basename}{suffix}"
         latest_path = output_dir / f"{basename}.latest"
-        v2ray_path = output_dir / f"{basename}.v2ray.txt"
         metadata_path = output_dir / f"{basename}.metadata.json"
-
         output_path.write_text(output, encoding="utf-8")
         latest_path.write_text(output, encoding="utf-8")
-        v2ray_path.write_text(v2ray_base64, encoding="utf-8")
         metadata_path.write_text(
             json.dumps(
                 {
@@ -477,7 +525,6 @@ class SubAggregatorPlugin(Star):
                     "node_count": node_count,
                     "output_file": str(output_path),
                     "latest_file": str(latest_path),
-                    "v2ray_file": str(v2ray_path),
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -486,30 +533,15 @@ class SubAggregatorPlugin(Star):
         )
         logger.info("订阅聚合结果已保存到本地文件：%s", output_path)
         return str(output_path)
-
     def _local_output_dir(self) -> Path:
         configured = str(self.config.get("local_output_dir") or "").strip()
         if configured:
             return Path(configured)
         return Path(__file__).resolve().parent
 
-    def _v2ray_output_file_path(self) -> str:
-        basename = str(self.config.get("local_output_basename") or "merged-subscription").strip()
-        if not basename:
-            basename = "merged-subscription"
-        return str(self._local_output_dir() / f"{basename}.v2ray.txt")
-
     def _subscription_path(self) -> str:
         prefix = str(self.config.get("path_prefix") or "/sub").strip("/") or "sub"
         return f"/{prefix}/{{token}}"
-
-    def _v2ray_path(self) -> str:
-        prefix = str(self.config.get("path_prefix") or "/sub").strip("/") or "sub"
-        return f"/{prefix}/{{token}}/v2ray"
-
-    def _health_path(self) -> str:
-        prefix = str(self.config.get("path_prefix") or "/sub").strip("/") or "sub"
-        return f"/{prefix}/health"
 
     def _public_subscription_url(self) -> str:
         token = self.config.get("access_token")
@@ -521,27 +553,6 @@ class SubAggregatorPlugin(Star):
                 host = "你的公网IP或域名"
             base_url = f"http://{host}:{self.config.get('http_port', 8077)}"
         return urljoin(base_url.rstrip("/") + "/", f"{prefix}/{token}")
-
-    def _public_v2ray_url(self) -> str:
-        token = self.config.get("access_token")
-        prefix = str(self.config.get("path_prefix") or "/sub").strip("/") or "sub"
-        base_url = str(self.config.get("public_base_url") or "").strip()
-        if not base_url:
-            host = self.config.get("http_host") or "127.0.0.1"
-            if host == "0.0.0.0":
-                host = "你的公网IP或域名"
-            base_url = f"http://{host}:{self.config.get('http_port', 8077)}"
-        return urljoin(base_url.rstrip("/") + "/", f"{prefix}/{token}/v2ray")
-
-    def _health_url(self) -> str:
-        prefix = str(self.config.get("path_prefix") or "/sub").strip("/") or "sub"
-        base_url = str(self.config.get("public_base_url") or "").strip()
-        if not base_url:
-            host = self.config.get("http_host") or "127.0.0.1"
-            if host == "0.0.0.0":
-                host = "你的公网IP或域名"
-            base_url = f"http://{host}:{self.config.get('http_port', 8077)}"
-        return urljoin(base_url.rstrip("/") + "/", f"{prefix}/health")
 
     async def _broadcast(self, text: str):
         targets = self.config.get("notify_targets", [])

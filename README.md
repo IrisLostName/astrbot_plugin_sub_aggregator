@@ -1,122 +1,105 @@
 # AstrBot 订阅聚合助手
 
-这个插件用于把多个机场订阅 URL 拉取后按配置顺序合并，输出一个总订阅 URL。
+AstrBot 插件，用于按配置顺序拉取多个机场订阅、保留来源备注、合并节点并输出一份 Clash/Mihomo 订阅。插件也提供本地 HTTP 出口和节点变化通知。
+
+Cloudflare Tunnel 和 `cloudflared` 守护已经拆分到 [`astrbot_plugin_cloudflare_tunnel`](../astrbot_plugin_cloudflare_tunnel)，本插件不负责 Tunnel 进程、Bot 后台保活或公网链路重启。
 
 ## 功能
 
-| 功能 | 状态 |
+| 功能 | 说明 |
 | --- | --- |
-| 多机场订阅 URL 配置 | 已支持 |
-| 按顺序 Base64 解码并合并节点 | 已支持 |
-| 输出 Base64 总订阅 | 已支持 |
-| Clash YAML 订阅解析与聚合 | 已支持 |
-| 节点名追加 `[机场名]` | 已支持 |
-| 每 3 小时定时拉取 | 默认开启 |
-| AstrBot 启动后推送一次 | 默认开启 |
-| 拉取失败日志与 QQ 通知 | 已支持 |
-| 节点新增/移除通知 | 已支持 |
-| 自托管短路径订阅 URL | 已支持 |
-| 按机场选择/自定义拉取 UA | 已支持 |
-| 后台手动节点源 | 已支持 |
-| 聚合结果保存到本地文件 | 已支持 |
-| v2rayN 兼容订阅导出 | 已支持 |
-| Telegram 风格按钮 | QQ 官方机器人 WS 下不保证支持，暂用指令和后台配置 |
-| subconverter 规则转换 | 暂未内置 |
+| 多订阅聚合 | 按优先级和配置顺序拉取并去重 |
+| 自定义 UA | 支持全局 UA 和单个订阅源 UA |
+| 来源备注 | 节点名称保留为 `[来源名]节点名` |
+| Clash/Mihomo 输出 | Clash YAML 输入会合并 `proxies`，并生成代理组和规则 |
+| MetaCubeX 分流 | `mihomo_metacubex` 会写入远程 `.mrs` rule-provider |
+| 定时刷新 | 启动后立即刷新，随后按更新间隔刷新；单次失败不会终止后续轮次 |
+| 变化通知 | 新增、更新、移除分组逐行显示，每类最多 50 条 |
+| 本地 HTTP 出口 | 提供带 token 的订阅 URL |
+| 本地文件 | 可保存 YAML、最近结果和元数据 |
 
 ## 安装
 
-1. 把本目录放进 `AstrBot/data/plugins/astrbot_plugin_sub_aggregator`。
-2. 重启 AstrBot，或在 WebUI 插件管理里重载插件。
-3. 在插件配置里填写 `机场订阅源`。
-4. 在 QQ 里发送 `/subagg bind`，把当前会话设为通知接收处。
-5. 发送 `/subagg refresh` 立即生成一次聚合订阅。
-6. 发送 `/subagg url` 查看总订阅 URL。
+将完整目录放入：
 
-## 关键配置
+```text
+/AstrBot/data/plugins/astrbot_plugin_sub_aggregator
+```
+
+目录中的 `src/` 必须一并复制。然后重启 AstrBot，或使用 WebUI 重载插件。
+
+安装后：
+
+1. 在插件配置中填写 `机场订阅源`。
+2. 使用 `/subagg bind` 绑定接收通知的会话。
+3. 使用 `/subagg refresh` 手动刷新并验证订阅源。
+4. 使用 `/subagg status` 检查 HTTP 服务和最近刷新时间。
+5. 使用 `/subagg url` 获取带 token 的订阅地址。
+
+## 主要配置
 
 | 配置 | 默认值 | 说明 |
 | --- | --- | --- |
-| `subscription_sources` | 空 | 多个机场订阅源，按列表顺序合并 |
-| `subscription_sources[].priority` | `100` | 订阅源优先级，数字越小越靠前 |
-| `manual_node_sources[].priority` | `100` | 手动节点源优先级，数字越小越靠前 |
-| `update_interval_minutes` | `180` | 每 3 小时更新一次 |
-| `user_agent_preset` | `mihomo` | 全局拉取 UA 预设 |
-| `user_agent` | `mihomo/1.19.27` | 自定义全局 UA，预设为 `custom` 时使用 |
-| `public_base_url` | 空 | 建议填公网 IP/域名，例如 `http://1.2.3.4:8077` |
-| `http_port` | `8077` | 插件自带订阅 HTTP 出口端口 |
-| `access_token` | 自动生成 | 订阅 URL 的访问 token |
-| `output_format` | `auto` | 自动判断传统 Base64 或 Clash YAML |
-| `output_base64` | `true` | 输出传统 Base64 订阅 |
-| `rule_profile` | `mihomo_ruleset` | Clash YAML 规则模板；填 `none` 可关闭分流规则 |
-| `save_local_files` | `true` | 每次刷新成功后保存本地文件 |
+| `subscription_sources` | 空 | 机场订阅列表，支持名称、URL、优先级、单独 UA、启用状态 |
+| `manual_node_sources` | 空 | 粘贴单条或多条已解密的节点链接 |
+| `update_interval_minutes` | `180` | 定时拉取间隔，单位分钟，最小为 1 |
+| `startup_push` | `true` | AstrBot 启动后刷新并按配置推送结果 |
+| `notify_on_node_change` | `true` | 节点变化时通知 |
+| `notify_on_error` | `true` | 拉取或输出失败时通知 |
+| `user_agent_preset` | `mihomo` | 全局 UA 预设；也支持 `clashmeta`、`clash`、`flclash`、`karing`、`custom` |
+| `user_agent` | `mihomo/1.19.27` | 预设为 `custom` 时使用的 UA |
+| `request_timeout_seconds` | `20` | 单个订阅请求超时 |
+| `rule_profile` | `mihomo_metacubex` | Clash/Mihomo 分流模板 |
+| `deduplicate_nodes` | `true` | 合并时按节点指纹去重 |
+| `save_local_files` | `true` | 保存聚合结果到本地 |
 | `local_output_dir` | 空 | 留空表示插件目录 |
-| `local_output_basename` | `merged-subscription` | 本地输出文件名前缀 |
+| `local_output_basename` | `merged-subscription` | 输出文件名前缀 |
+| `http_enable` | `true` | 启用本地订阅 HTTP 出口 |
+| `http_host` | `0.0.0.0` | HTTP 监听地址 |
+| `http_port` | `8077` | HTTP 监听端口 |
+| `public_base_url` | 空 | 公网域名或 IP，例如 `https://sub.example.com` |
+| `path_prefix` | `/sub` | 订阅路径前缀 |
+| `access_token` | 自动生成 | 订阅访问 token；泄露后清空并重载插件 |
+| `max_change_names` | `50` | 变化通知展示上限，按新增、更新、移除顺序计算 |
 
-## 节点命名
+## 输出和规则
 
-插件会把配置里的订阅源名称写入节点名：
+后台 schema 已移除 v2ray 专用导出配置。插件的目标输出是 Clash/Mihomo；输出结果的实际格式会记录在 `/subagg status` 和本地 metadata 中。
 
-| 原节点名 | 订阅源名称 | 输出节点名 |
-| --- | --- | --- |
-| `🇭🇰 Hong Kong 01` | `机场A` | `🇭🇰[机场A] Hong Kong 01` |
-| `Node 01` | `机场A` | `[机场A]Node 01` |
+`mihomo_metacubex` 会在生成的 YAML 中写入 `rule-providers` 和 `RULE-SET`。规则文件由 Mihomo 客户端运行时从远程地址下载，因此客户端仍需要能够访问规则源。若客户端无法下载远程规则，可临时使用 `inline`、`basic` 或 `none`。
 
-手动节点源也使用同样规则，名称来自 `manual_node_sources` 里的 `name`。
-
-## 手动节点源
-
-后台 `manual_node_sources` 可以粘贴已经解密的节点链接，例如：
-
-```text
-vless://...
-hysteria2://...
-trojan://...
-```
-
-每个手动节点源都有 `name`、`nodes`、`priority`、`user_agent`、`enabled`。其中 `user_agent` 目前只用于记录来源，手动节点不会发起网络请求。
-
-## 分流规则
-
-默认 `rule_profile=mihomo_ruleset` 会生成带 emoji 的代理组，并通过远程 `rule-providers` 拉取常见规则。Microsoft / OneDrive / Office / GitHub / OpenAI 等常见服务默认走代理组。可选：
+可用规则模板：
 
 | 值 | 说明 |
 | --- | --- |
-| `mihomo_ruleset` | 推荐模板，带 emoji 分组，使用远程 rule-providers |
-| `inline` / `emoji_microsoft_proxy` | 无远程依赖的简化内置规则，微软服务走代理组 |
-| `basic` | 简单直连内网与 CN，其余走代理 |
-| `none` | 不写 `rules`，并把 YAML 设为 `mode: global` |
+| `mihomo_metacubex` | 推荐，MetaCubeX `.mrs` 规则 |
+| `mihomo_dustinwin` | 使用 DustinWin `.mrs` 规则 |
+| `mihomo_ruleset` | 兼容旧版 blackmatrix7 YAML rule-provider |
+| `inline` | 无远程依赖的简化规则 |
+| `basic` | 基础直连/代理规则 |
+| `none` | 不写分流规则，使用 global 模式 |
 
-ACL4SSR 的 `.ini` 通常是给 subconverter 使用的远程转换模板，不是可以直接放进 Mihomo `rules:` 的规则文件。本插件默认使用 blackmatrix7 的 Clash 规则集作为远程 rule-providers；如果客户端不支持 rule-providers，改用 `inline` 或 `none`。
+## 节点备注和变化通知
 
-## 客户端建议
-
-| 客户端 | 建议订阅 | 说明 |
-| --- | --- | --- |
-| Karing | 主订阅 URL | 更适合 Mihomo/sing-box 风格节点和 YAML |
-| Betterbox | 主订阅 URL | 如果它按 sing-box/Mihomo 解析成功，优先用主订阅 |
-| v2rayN | `/sub/你的token/v2ray` 或 `merged-subscription.v2ray.txt` | v2rayN 更适合传统 Base64 分享链接订阅 |
-| 老 Clash | 不建议 | `hysteria2`、`vless xhttp`、Reality 等新字段经常不兼容 |
-
-## 国旗补全
-
-不建议在主刷新流程里直接探测每个节点出口 IP：这需要真实连接每个代理再访问 IP 查询服务，速度慢，也容易被限流。更稳的做法是后续单独做一个“节点探测任务”，把探测到的国家缓存起来，再用于改名。
-
-## 本地输出文件
-
-刷新成功后默认写到插件目录，也就是部署在容器里时：
+机场源名称会加到节点名之前：
 
 ```text
-/astrbot-napcat-bjiqg3/data/plugins/astrbot_plugin_sub_aggregator/
+原名称：Hong Kong 01
+来源名称：机场A
+输出名称：[机场A]Hong Kong 01
 ```
 
-| 文件 | 说明 |
-| --- | --- |
-| `merged-subscription.yaml` | 当输出格式为 Clash YAML 时生成 |
-| `merged-subscription.base64.txt` | 当输出格式为 Base64 时生成 |
-| `merged-subscription.txt` | 当输出格式为 plain 时生成 |
-| `merged-subscription.latest` | 最近一次聚合结果，不管格式都会覆盖 |
-| `merged-subscription.v2ray.txt` | v2rayN 兼容的 Base64 分享链接订阅。仅包含能从原始 `vless://` 等链接保留下来的节点 |
-| `merged-subscription.metadata.json` | 最近刷新时间、节点数、输出格式、文件路径 |
+变化通知按新增、更新、移除分组逐行显示。每类最多展示 50 个节点；超出部分只显示该类别的剩余数量。插件会从上一轮保存的节点快照中恢复移除节点的真实名称，不应显示 fingerprint。
+
+## HTTP 地址
+
+假设公网域名为 `https://sub.example.com`、端口为 `8077`、路径前缀为 `/sub`，则订阅地址为：
+
+```text
+https://sub.example.com/sub/YOUR_TOKEN
+```
+
+按当前解耦方案，订阅插件不创建 HTTP/Tunnel 保活任务。需要检查订阅 HTTP 出口、Bot 后台或 cloudflared 时，请在独立 Cloudflare 插件中配置实际可访问的回源地址。
 
 ## 指令
 
@@ -124,28 +107,27 @@ ACL4SSR 的 `.ini` 通常是给 subconverter 使用的远程转换模板，不�
 | --- | --- |
 | `/subagg help` | 查看帮助 |
 | `/subagg bind` | 绑定当前会话接收通知 |
-| `/subagg url` | 查看聚合订阅 URL |
-| `/subagg status` | 查看 HTTP 出口、健康检查地址、最近刷新状态 |
+| `/subagg status` | 查看 HTTP 服务、订阅 URL、最近刷新和节点数量 |
 | `/subagg refresh` | 立即拉取并聚合 |
+| `/subagg url` | 查看订阅 URL |
 | `/subagg list` | 查看机场列表 |
-| `/subagg add 名称 URL` | 添加一个机场订阅 |
-| `/subagg remove 名称` | 删除指定名称的机场订阅 |
+| `/subagg add 名称 URL` | 添加机场订阅 |
+| `/subagg remove 名称` | 删除机场订阅 |
 
-## HTTP 无响应排查
+## 自动更新排查
 
-| 检查项 | 说明 |
-| --- | --- |
-| URL 写法 | IPv4 不要加方括号，正确格式是 `http://公网IP:8077/sub/token` |
-| 健康检查 | 先访问 `http://公网IP:8077/sub/health`，能返回 `ok` 才说明 HTTP 出口通了 |
-| Docker 端口 | 如果 AstrBot 在 Docker 里运行，需要把容器的 `8077` 映射到宿主机 |
-| 防火墙/安全组 | 云服务器需要放行 TCP `8077` 入站 |
-| 插件状态 | 在 QQ 里发送 `/subagg status` 查看服务是否启动 |
+重载或更新插件后建议完整重启 AstrBot 容器，尤其是遇到 `8077 address already in use` 时。仅重载插件可能留下旧 HTTP 实例占用端口。
 
-## 说明
+1. `/subagg status` 确认 `服务：已启动` 和 `定时任务：运行中`。
+2. `/subagg refresh` 确认手动拉取成功。
+3. 等待一个 `update_interval_minutes` 周期，确认 `最近刷新` 变化。
+4. 检查日志中的定时刷新错误和失败通知。
 
-- 插件只处理常见分享链接：`ss`、`ssr`、`vmess`、`vless`、`trojan`、`hysteria`、`hysteria2`、`hy2`、`tuic`。
-- 如果某个机场会按客户端 UA 下发不同内容，可以在该机场订阅源的 `user_agent` 里单独填写完整 UA，例如 `Karing/1.2.21.2406 platform/windows`。
-- 全局 UA 预设可填：`mihomo`、`clashmeta`、`clash`、`v2ray`、`flclash`、`karing`、`custom`。
-- 如果机场给的是 Clash YAML 订阅，插件会聚合 `proxies` 并生成一份简化 Clash 配置；规则默认使用本插件生成的基础规则。
-- 节点变化通知只提示新增/移除节点，不会再次发送总订阅 URL。
-- 总订阅 URL 含 token，请不要发到公开群。
+定时任务会继续运行，即使某一次机场请求失败；失败会记录日志，并按配置通知。
+
+## 安全和发布
+
+- 不要在公开群、README 或 Git 中粘贴真实订阅 URL、访问 token 或运行日志。
+- `access_token` 泄露后清空配置并重载插件，使其重新生成。
+- 发布前运行 `python -m compileall .`、测试和 `git diff --check`。
+- `AGENTS.md` 中记录了本插件的开发规范。

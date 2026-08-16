@@ -113,7 +113,7 @@
   "user_agent_preset": {
     "description": "全局 UA 预设",
     "type": "string",
-    "hint": "可填：mihomo、clashmeta、clash、v2ray、flclash、karing、custom。默认 mihomo 通常更适合机场下发 Mihomo/Clash Meta 配置。",
+    "hint": "可填：mihomo、clashmeta、clash、flclash、karing、custom。默认 mihomo 通常更适合机场下发 Mihomo/Clash Meta 配置。",
     "default": "mihomo"
   },
   "user_agent": {
@@ -127,23 +127,11 @@
     "type": "int",
     "default": 20
   },
-  "output_base64": {
-    "description": "输出为 Base64 订阅",
-    "type": "bool",
-    "hint": "仅在 output_format 为 auto/base64 且订阅源是传统节点链接时生效。Clash YAML 会自动输出 YAML。",
-    "default": true
-  },
-  "output_format": {
-    "description": "输出格式",
-    "type": "string",
-    "hint": "auto=自动判断；base64=传统 Base64 节点订阅；plain=明文节点链接；clash_yaml=Clash YAML 配置。",
-    "default": "auto"
-  },
   "rule_profile": {
     "description": "Clash YAML 分流规则模板",
     "type": "string",
-    "hint": "mihomo_ruleset=推荐，使用远程 rule-providers；inline=无远程依赖的简化规则；basic=基础规则；none=不写分流规则并使用 global 模式。",
-    "default": "mihomo_ruleset"
+    "hint": "mihomo_metacubex=推荐，使用 MetaCubeX/meta-rules-dat 的 .mrs 规则；mihomo_dustinwin=高级，使用 DustinWin/ruleset_geodata 的 .mrs 规则；mihomo_ruleset=兼容旧版 blackmatrix7 yaml rule-providers；inline=无远程依赖简化规则；basic=基础规则；none=不写分流规则并使用 global 模式。微软服务在这些推荐模板里默认走代理。",
+    "default": "mihomo_metacubex"
   },
   "deduplicate_nodes": {
     "description": "合并时去重",
@@ -153,7 +141,7 @@
   "save_local_files": {
     "description": "保存聚合结果到本地文件",
     "type": "bool",
-    "hint": "开启后每次刷新成功都会在插件目录下写出 merged-subscription.yaml/txt 等文件。",
+    "hint": "开启后每次刷新成功都会在插件目录下写出 merged-subscription.yaml 等文件。",
     "default": true
   },
   "local_output_dir": {
@@ -202,8 +190,9 @@
     "default": ""
   },
   "max_change_names": {
-    "description": "变化通知最多展示节点名数量",
+    "description": "变化通知最多展示节点总数量",
+    "hint": "新增、更新、移除合计最多展示 50 个，按新增、更新、移除顺序排列。",
     "type": "int",
-    "default": 8
+    "default": 50
   }
 }
