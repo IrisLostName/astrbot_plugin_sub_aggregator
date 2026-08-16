@@ -6,7 +6,7 @@
 
 - 本插件只负责订阅源拉取、节点解析合并、Clash/Mihomo 配置输出和变化通知。
 - Cloudflare Tunnel、`cloudflared` 守护、Bot 后台连通性检查属于独立的 `astrbot_plugin_cloudflare_tunnel` 插件。
-- HTTP 出口的 `/sub/health` 路由是订阅服务的被动状态接口，不在本插件内创建定时保活任务。
+- HTTP 出口只负责订阅请求，不在本插件内创建 health/Tunnel 定时保活任务；连通性守护属于独立的 `astrbot_plugin_cloudflare_tunnel` 插件。
 
 ## 修改要求
 
@@ -34,4 +34,3 @@ git diff --check
 ```
 
 提交前确认完整插件树包含 `src/`、测试、schema、metadata 和 README。不要提交 `__pycache__`、日志、本地合并结果或订阅内容。
-

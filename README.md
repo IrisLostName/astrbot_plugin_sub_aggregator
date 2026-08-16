@@ -131,3 +131,15 @@ https://sub.example.com/sub/YOUR_TOKEN
 - `access_token` 泄露后清空配置并重载插件，使其重新生成。
 - 发布前运行 `python -m compileall .`、测试和 `git diff --check`。
 - `AGENTS.md` 中记录了本插件的开发规范。
+
+## 插件市场
+
+仓库根目录的 `metadata.yaml` 是插件包元数据；市场源 JSON 是另一种独立格式，不能用 `metadata.yaml` 代替。仓库中的 `plugins.json` 按 AstrBot 插件市场 JSON Schema Version 1 编写，包含本插件和 Cloudflare Tunnel 守护插件的记录。
+
+市场源 raw 地址：
+
+```text
+https://raw.githubusercontent.com/IrisLostName/astrbot_plugin_sub_aggregator/main/plugins.json
+```
+
+发布到 AstrBot 官方市场时，还需要在 [AstrBot 插件发布页面](https://cloud.astrbot.app/publish) 中提交对应 GitHub 仓库，并确保发布版本与 `metadata.yaml` 一致。

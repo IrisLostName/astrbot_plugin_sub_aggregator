@@ -60,7 +60,7 @@ def subagg():
     PLUGIN_NAME,
     "chenh",
     "聚合多个机场订阅 URL，并通过固定短路径输出一个总订阅链接。",
-    "0.3.0",
+    "0.3.1",
 )
 class SubAggregatorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):

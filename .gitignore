@@ -8,3 +8,7 @@ merged-subscription*.yaml
 merged-subscription*.txt
 merged-subscription*.latest
 merged-subscription*.json
+
+# 本地发布检查产物
+dist/
+*.zip
