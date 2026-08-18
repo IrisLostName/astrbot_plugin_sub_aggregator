@@ -33,7 +33,7 @@ def subagg():
     pass
 
 
-@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML。", "0.3.4")
+@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML。", "0.3.5")
 class SubscriptionAggregatorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -69,10 +69,10 @@ class SubscriptionAggregatorPlugin(Star):
             try:
                 await self.http_server.start()
                 self._http_start_error = ""
-                self.state.append_log("info", "http server started", host=self.http_server.host, port=self.http_server.port)
+                self._append_log("info", "http server started", host=self.http_server.host, port=self.http_server.port)
             except Exception as exc:
                 self._http_start_error = f"{type(exc).__name__}: {exc}"
-                self.state.append_log("error", "http server start failed", error=type(exc).__name__)
+                self._append_log("error", "http server start failed", error=type(exc).__name__)
                 logger.exception("订阅 HTTP 服务启动失败：%s", self._http_start_error)
         self._refresh_task = asyncio.create_task(self._refresh_loop())
         message = await self._refresh_once("启动刷新")
@@ -125,7 +125,7 @@ class SubscriptionAggregatorPlugin(Star):
         yield event.plain_result(
             "订阅聚合状态：\n"
             f"运行目录：{self.state.root}\n"
-            f"日志：{self.state.log_path}\n"
+            f"日志：{getattr(self.state, 'log_path', self.state.root / 'subagg.log')}\n"
             f"节点数：{metadata.get('node_count', 0)}\n"
             f"源数量：{metadata.get('source_count', 0)}\n"
             f"规则 profile：{self.config.get('rule_profile', 'metacubex')}\n"
@@ -185,8 +185,8 @@ class SubscriptionAggregatorPlugin(Star):
         try:
             saved = await self._save_local_file(event, name, source)
         except Exception as exc:
-            self.state.append_log("error", "local file import failed", source=name, error=type(exc).__name__)
-            yield event.plain_result(f"本地文件导入失败：{type(exc).__name__}。日志：{self.state.log_path}")
+            self._append_log("error", "local file import failed", source=name, error=type(exc).__name__)
+            yield event.plain_result(f"本地文件导入失败：{type(exc).__name__}。日志：{getattr(self.state, 'log_path', self.state.root / 'subagg.log')}")
             return
         sources = [item for item in self.config.get("subscription_sources", []) if isinstance(item, dict)]
         sources = [item for item in sources if str(item.get("name") or "") != name]
@@ -201,7 +201,7 @@ class SubscriptionAggregatorPlugin(Star):
         })
         self.config["subscription_sources"] = sources
         self.config.save_config()
-        self.state.append_log("info", "local file imported", source=name, file=str(saved))
+        self._append_log("info", "local file imported", source=name, file=str(saved))
         yield event.plain_result(f"已保存本地订阅文件：{name}\n路径：{saved}\n请执行 /subagg refresh 验证。")
 
 
@@ -254,7 +254,7 @@ class SubscriptionAggregatorPlugin(Star):
         try:
             report = await self.refresh_service.refresh(self._sources())
         except Exception as exc:
-            self.state.append_log("error", "refresh failed", reason=reason, error=type(exc).__name__)
+            self._append_log("error", "refresh failed", reason=reason, error=type(exc).__name__)
             logger.exception("订阅刷新失败：%s", type(exc).__name__)
             return f"{reason}失败：{type(exc).__name__}"
         return self._format_refresh_report(reason, report)
@@ -295,5 +295,15 @@ class SubscriptionAggregatorPlugin(Star):
             except Exception:
                 logger.exception("订阅聚合通知发送失败")
 
-    def _runner_active(self) -> bool:
+    def _append_log(self, level: str, message: str, **details: object) -> None:
+        writer = getattr(self.state, "append_log", None)
+        if callable(writer):
+            writer(level, message, **details)
+            return
+        path = self.state.root / "subagg.log"
+        detail_text = " ".join(f"{key}={value}" for key, value in details.items())
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(f"{datetime.now().isoformat()} [{level}] {message} {detail_text}\n")
+
+
         return self.http_server._runner is not None

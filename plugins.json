@@ -7,25 +7,39 @@
   "chenh/astrbot_plugin_sub_aggregator": {
     "author": "chenh",
     "name": "astrbot_plugin_sub_aggregator",
-    "version": "0.3.4",
+    "version": "0.3.5",
     "repo": "https://github.com/IrisLostName/astrbot_plugin_sub_aggregator",
     "desc": "按内容识别并聚合远程、本地和上传的订阅，输出 Mihomo/Clash YAML。",
     "display_name": "订阅聚合助手",
     "short_desc": "多协议订阅聚合与 Mihomo YAML 输出。",
     "astrbot_version": ">=4.10.4,<5",
-    "support_platforms": ["qq_official", "qq_official_webhook"],
-    "tags": ["Clash", "Mihomo", "订阅聚合"]
+    "support_platforms": [
+      "qq_official",
+      "qq_official_webhook"
+    ],
+    "tags": [
+      "Clash",
+      "Mihomo",
+      "订阅聚合"
+    ]
   },
   "chenh/astrbot_plugin_cloudflare_tunnel": {
     "author": "chenh",
     "name": "astrbot_plugin_cloudflare_tunnel",
-    "version": "0.2.2",
+    "version": "0.2.3",
     "repo": "https://github.com/IrisLostName/astrbot_plugin_cloudflare_tunnel",
     "desc": "守护 cloudflared 子进程，检查内部回源并在故障时通知。",
     "display_name": "Cloudflare Tunnel 守护",
     "short_desc": "cloudflared 生命周期、健康检查与熔断通知。",
     "astrbot_version": ">=4.10.4,<5",
-    "support_platforms": ["qq_official", "qq_official_webhook"],
-    "tags": ["Cloudflare", "Tunnel", "cloudflared"]
+    "support_platforms": [
+      "qq_official",
+      "qq_official_webhook"
+    ],
+    "tags": [
+      "Cloudflare",
+      "Tunnel",
+      "cloudflared"
+    ]
   }
 }
