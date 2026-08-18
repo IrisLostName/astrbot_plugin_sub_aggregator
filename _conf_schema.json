@@ -26,7 +26,7 @@
   "http_enable": {"type": "bool", "description": "启用订阅 HTTP", "default": true},
   "http_host": {"type": "string", "description": "监听地址", "default": "127.0.0.1"},
   "http_port": {"type": "int", "description": "监听端口", "default": 8077},
-  "public_base_url": {"type": "string", "description": "公网订阅基础地址", "default": "https://bot.tomori.cloud"},
+  "public_base_url": {"type": "string", "description": "公网订阅基础地址", "default": "https://sub.tomori.cloud"},
   "refresh_interval_minutes": {"type": "int", "description": "刷新间隔", "default": 180},
   "startup_push": {"type": "bool", "description": "启动刷新后通知绑定会话", "default": false},
   "notify_on_error": {"type": "bool", "description": "定时刷新失败时通知", "default": true},

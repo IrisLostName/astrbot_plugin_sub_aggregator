@@ -20,7 +20,7 @@ Install the complete plugin tree under `AstrBot/data/plugins/astrbot_plugin_sub_
 - `/subagg localfile NAME PATH_OR_URL` — import a local file path or HTTP(S) file without pasting its content.
 - `/subagg remove NAME` — remove sources with the given name.
 
-The public subscription path is fixed to `/sub/<token>`. The internal health path is fixed to `/sub/healthz` for Tunnel only. The default public base is `https://bot.tomori.cloud`; if Cloudflare Access protects that hostname, configure an Access bypass/service policy for `/sub/*`, otherwise subscription clients will receive the Access login response instead of YAML.
+The public subscription path is fixed to `/sub/<token>` and defaults to `https://sub.tomori.cloud`. Route that hostname to the local subscription HTTP service through Cloudflare Tunnel without the Bot email Access policy. The internal health path is fixed to `/sub/healthz` for Tunnel checks only.
 
 
 The default `metacubex` profile uses MetaCubeX MRS rule providers and boot-safe DNS. Use `minimal` only for diagnosis; it does not include the maintained DNS/rule profile.

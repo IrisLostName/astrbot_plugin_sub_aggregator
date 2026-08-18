@@ -33,7 +33,7 @@ def subagg():
     pass
 
 
-@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML。", "0.3.5")
+@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML。", "0.3.6")
 class SubscriptionAggregatorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -260,10 +260,40 @@ class SubscriptionAggregatorPlugin(Star):
         return self._format_refresh_report(reason, report)
 
     def _format_refresh_report(self, reason: str, report: RefreshReport) -> str:
-        if report.published:
-            changes = f"新增 {len(report.added)}，更新 {len(report.updated)}，移除 {len(report.removed)}"
-            return f"{reason}完成：{len(report.nodes)} 个节点；{changes}。"
-        return f"{reason}未发布新结果：{len(report.issues)} 项输入问题，已保留上次成功订阅。"
+        sections: list[str] = []
+        if report.issues:
+            failure_lines = [f"{issue.source}: {issue.reason}" for issue in report.issues]
+            sections.append("部分订阅拉取失败：\n" + "\n".join(failure_lines))
+        failed_sources = len({issue.source for issue in report.issues})
+        output_file = getattr(report, "output_file", str(self.state.root / "merged-subscription.yaml"))
+        published_note = "" if report.published else "\n已保留上次成功输出。"
+        sections.append(
+            f"{reason}完成：总计{len(report.nodes)} 个节点，{failed_sources} 个机场失败，输出格式：clash_yaml。"
+            f"\n本地文件：{output_file}\n{self._public_subscription_url()}{published_note}"
+        )
+        change_message = self._format_change_message(report)
+        if change_message:
+            sections.append(change_message)
+        return "\n\n".join(sections)
+
+    @staticmethod
+    def _format_change_message(report: RefreshReport) -> str:
+        if not report.added and not report.updated and not report.removed:
+            return ""
+        sections = [f"订阅节点有变化：新增 {len(report.added)} 个，更新 {len(report.updated)} 个，移除 {len(report.removed)} 个。"]
+        remaining = 50
+        for label, nodes in (("新增", report.added), ("更新", report.updated), ("移除", report.removed)):
+            if not nodes or remaining <= 0:
+                continue
+            shown = nodes[:remaining]
+            remaining -= len(shown)
+            sections.append("\n".join([f"{label}：", *(node.name for node in shown)]))
+        hidden = len(report.added) + len(report.updated) + len(report.removed) - min(
+            50, len(report.added) + len(report.updated) + len(report.removed)
+        )
+        if hidden:
+            sections.append(f"另有 {hidden} 个变化未展开。")
+        return "\n\n".join(sections)
 
     def _sources(self) -> list[dict]:
         sources = [source for source in self.config.get("subscription_sources", []) if isinstance(source, dict)]
@@ -285,7 +315,7 @@ class SubscriptionAggregatorPlugin(Star):
     def _public_subscription_url(self) -> str:
         token = str(self.config.get("access_token") or "")
         prefix = SUBSCRIPTION_PREFIX.strip("/")
-        base = str(os.environ.get("ASTRBOT_SUBAGG_PUBLIC_BASE_URL") or self.config.get("public_base_url") or "https://bot.tomori.cloud").strip()
+        base = str(os.environ.get("ASTRBOT_SUBAGG_PUBLIC_BASE_URL") or self.config.get("public_base_url") or "https://sub.tomori.cloud").strip()
         return urljoin(base.rstrip("/") + "/", f"{prefix}/{token}")
 
     async def _broadcast(self, text: str) -> None:
@@ -305,5 +335,5 @@ class SubscriptionAggregatorPlugin(Star):
         with path.open("a", encoding="utf-8") as handle:
             handle.write(f"{datetime.now().isoformat()} [{level}] {message} {detail_text}\n")
 
-
+    def _runner_active(self) -> bool:
         return self.http_server._runner is not None

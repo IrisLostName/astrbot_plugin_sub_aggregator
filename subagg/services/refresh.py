@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ..sources.local import LocalSource
-from ..sources.remote import RemoteSourceFetcher
+from ..sources.remote import RemoteFetchError, RemoteSourceFetcher
 from ..state import StateStore
 from ..subscription.merge import merge_nodes
 from ..subscription.models import ConversionIssue, ParsedNode, SourceResult
@@ -24,6 +24,7 @@ class RefreshReport:
     updated: list[ParsedNode]
     removed: list[ParsedNode]
     issues: list[ConversionIssue]
+    output_file: str
     published: bool
 
 
@@ -53,6 +54,9 @@ class RefreshService:
                     else:
                         response = await self.fetcher.fetch(str(raw.get("url") or ""), user_agent=str(raw.get("user_agent") or ""))
                         result = parse_source(response.text, name)
+                except RemoteFetchError as exc:
+                    self._append_log("error", "source fetch failed", source=name, status=exc.status, url=exc.url)
+                    result = SourceResult(name, kind=parse_source("", name).kind, issues=[ConversionIssue(name, "fetch", str(exc))])
                 except Exception as exc:
                     self._append_log("error", "source fetch or parse failed", source=name, error=type(exc).__name__)
                     result = SourceResult(name, kind=parse_source("", name).kind, issues=[ConversionIssue(name, "fetch", type(exc).__name__)])
@@ -83,6 +87,7 @@ class RefreshService:
                 updated=updated,
                 removed=removed,
                 issues=issues,
+                output_file=str(self.state.output_path),
                 published=published,
             )
 
