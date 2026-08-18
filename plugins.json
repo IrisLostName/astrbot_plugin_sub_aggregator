@@ -26,7 +26,7 @@
   "chenh/astrbot_plugin_cloudflare_tunnel": {
     "author": "chenh",
     "name": "astrbot_plugin_cloudflare_tunnel",
-    "version": "0.2.4",
+    "version": "0.2.5",
     "repo": "https://github.com/IrisLostName/astrbot_plugin_cloudflare_tunnel",
     "desc": "守护 cloudflared 子进程，检查内部回源并在故障时通知。",
     "display_name": "Cloudflare Tunnel 守护",
