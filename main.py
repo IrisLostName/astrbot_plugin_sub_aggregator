@@ -1,54 +1,31 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import os
 import secrets
-from dataclasses import dataclass
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
 from urllib.parse import urljoin
 
-import aiohttp
-from aiohttp import web
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.star import Context, Star, register
 
-try:
-    from .src.subagg_core import NodeInfo, decode_subscription, merge_nodes, summarize_changes
-except ImportError:
-    try:
-        from src.subagg_core import NodeInfo, decode_subscription, merge_nodes, summarize_changes
-    except ImportError:
-        from subagg_core import NodeInfo, decode_subscription, merge_nodes, summarize_changes
+
+PLUGIN_ROOT = Path(__file__).resolve().parent
+if str(PLUGIN_ROOT) not in sys.path:
+    sys.path.insert(0, str(PLUGIN_ROOT))
+
+from subagg.http_server import SubscriptionHttpServer
+from subagg.services.refresh import RefreshReport, RefreshService
+from subagg.sources.file_store import LocalFileStore
+from subagg.state import StateStore
 
 
 PLUGIN_NAME = "astrbot_plugin_sub_aggregator"
-KV_LAST_FINGERPRINTS = "last_node_fingerprints"
-KV_LAST_NODE_SNAPSHOT = "last_node_snapshot"
-KV_LAST_OUTPUT = "last_subscription_output"
-KV_LAST_OUTPUT_FORMAT = "last_subscription_output_format"
-KV_LAST_OUTPUT_FILE = "last_subscription_output_file"
-KV_LAST_NODE_COUNT = "last_node_count"
-KV_LAST_REFRESH_AT = "last_refresh_at"
-
-UA_PRESETS = {
-    "mihomo": "mihomo/1.19.27",
-    "clashmeta": "ClashMeta",
-    "clash-meta": "ClashMeta",
-    "clash": "ClashforWindows/0.20.39",
-    "clashforwindows": "ClashforWindows/0.20.39",
-    "flclash": "FLClash",
-    "karing": "Karing/1.2.21.2406 platform/windows",
-    "custom": "",
-}
-
-
-@dataclass(frozen=True)
-class FetchResult:
-    name: str
-    text: str
+SUBSCRIPTION_PREFIX = "/sub"
+INTERNAL_HEALTH_PATH = "/sub/healthz"
 
 
 @filter.command_group("subagg")
@@ -56,60 +33,72 @@ def subagg():
     pass
 
 
-@register(
-    PLUGIN_NAME,
-    "chenh",
-    "聚合多个机场订阅 URL，并通过固定短路径输出一个总订阅链接。",
-    "0.3.1",
-)
-class SubAggregatorPlugin(Star):
+@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML。", "0.3.4")
+class SubscriptionAggregatorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.context = context
         self.config = config
-        self._session: aiohttp.ClientSession | None = None
+        self._ensure_access_token()
+        self.state = StateStore(self._runtime_dir())
+        local_dir = str(config.get("local_sources_dir") or "").strip() or str(self.state.root / "local_sources")
+        self.local_file_store = LocalFileStore(local_dir)
+        self.refresh_service = RefreshService(
+            self.state,
+            user_agent=str(config.get("user_agent") or "clash-verge"),
+            timeout_seconds=int(config.get("request_timeout_seconds") or 20),
+            rule_profile=str(config.get("rule_profile") or "metacubex"),
+        )
+        self.http_server = SubscriptionHttpServer(
+            self.state,
+            host=str(config.get("http_host") or "127.0.0.1"),
+            port=int(config.get("http_port") or 8077),
+            path_prefix=SUBSCRIPTION_PREFIX,
+            access_token=str(config.get("access_token") or ""),
+            health_path=INTERNAL_HEALTH_PATH,
+        )
         self._refresh_task: asyncio.Task | None = None
-        self._web_runner: web.AppRunner | None = None
-        self._web_site: web.TCPSite | None = None
-        self._refresh_lock = asyncio.Lock()
-        self._http_last_error = ""
-        self._refresh_last_error = ""
-        self._refresh_next_at = ""
         self._stopping = False
-        self._ensure_token()
+        self._http_start_error = ""
+        self._next_refresh_at = ""
+
+    @filter.on_astrbot_loaded()
+    async def on_astrbot_loaded(self):
+        self._stopping = False
+        if self.config.get("http_enable", True):
+            try:
+                await self.http_server.start()
+                self._http_start_error = ""
+                self.state.append_log("info", "http server started", host=self.http_server.host, port=self.http_server.port)
+            except Exception as exc:
+                self._http_start_error = f"{type(exc).__name__}: {exc}"
+                self.state.append_log("error", "http server start failed", error=type(exc).__name__)
+                logger.exception("订阅 HTTP 服务启动失败：%s", self._http_start_error)
+        self._refresh_task = asyncio.create_task(self._refresh_loop())
+        message = await self._refresh_once("启动刷新")
+        if self.config.get("startup_push", False):
+            await self._broadcast(message)
 
     async def terminate(self):
         self._stopping = True
         if self._refresh_task:
             self._refresh_task.cancel()
             await asyncio.gather(self._refresh_task, return_exceptions=True)
-        if self._web_runner:
-            await self._web_runner.cleanup()
-        self._web_runner = None
-        self._web_site = None
-        if self._session:
-            await self._session.close()
+        await self.http_server.stop()
+        await self.refresh_service.close()
 
-    @filter.on_astrbot_loaded()
-    async def on_astrbot_loaded(self):
-        self._stopping = False
-        await self._try_ensure_http_server()
-        await self._start_refresh_task()
-        # 启动后立即刷新；startup_push 只控制是否把启动结果推送到通知会话。
-        await self.refresh_and_notify(
-            reason="AstrBot 已启动",
-            send_url=bool(self.config.get("startup_push", True)),
-        )
     @subagg.command("help")
     async def help_cmd(self, event: AstrMessageEvent):
         yield event.plain_result(
-            "订阅聚合指令：\n"
-            "/subagg bind - 把当前会话设为通知接收处\n"
-            "/subagg url - 查看聚合订阅链接\n"
-            "/subagg status - 查看 HTTP 出口状态\n"
-            "/subagg refresh - 立即拉取并聚合\n"
-            "/subagg list - 查看已配置机场\n"
-            "/subagg add 名称 URL - 添加机场订阅\n"
-            "/subagg remove 名称 - 删除机场订阅"
+            "订阅聚合命令：\n"
+            "/subagg bind - 绑定当前会话接收故障通知\n"
+            "/subagg url - 查看带 token 的订阅地址\n"
+            "/subagg status - 查看运行、节点和 HTTP 状态\n"
+            "/subagg refresh - 立即刷新\n"
+            "/subagg list - 查看已配置源\n"
+            "/subagg add 名称 URL - 添加远程订阅源\n"
+            "/subagg localfile 名称 [本地路径或URL] - 保存本地文件订阅\n"
+            "/subagg remove 名称 - 删除同名订阅源"
         )
 
     @filter.permission_type(filter.PermissionType.ADMIN)
@@ -120,448 +109,191 @@ class SubAggregatorPlugin(Star):
             targets.append(event.unified_msg_origin)
             self.config["notify_targets"] = targets
             self.config.save_config()
-        yield event.plain_result("已把当前会话设为订阅聚合通知接收处。")
+        yield event.plain_result("已绑定当前会话为订阅聚合通知接收处。")
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @subagg.command("url")
     async def url_cmd(self, event: AstrMessageEvent):
-        await self._try_ensure_http_server()
         yield event.plain_result(self._public_subscription_url())
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @subagg.command("status")
     async def status_cmd(self, event: AstrMessageEvent):
-        await self._try_ensure_http_server()
-        last_refresh_at = await self.get_kv_data(KV_LAST_REFRESH_AT, "从未刷新")
-        output_format = await self.get_kv_data(KV_LAST_OUTPUT_FORMAT, "未知")
-        node_count = await self.get_kv_data(KV_LAST_NODE_COUNT, 0)
-        interval = self._update_interval_minutes()
-        if self._refresh_task and not self._refresh_task.done():
-            refresh_task_state = "运行中"
-        elif self._refresh_task and self._refresh_task.cancelled():
-            refresh_task_state = "已取消"
-        else:
-            refresh_task_state = "已停止"
-        http_state = "已启用" if self.config.get("http_enable", True) else "未启用"
-        runner_state = "已启动" if self._web_runner else "未启动"
-        http_error = self._http_last_error or "无"
+        metadata = self.state.load().get("metadata", {})
+        http_status = "运行中" if self._runner_active() else ("启动失败" if self._http_start_error else "未启用")
+        public_url = self._public_subscription_url()
         yield event.plain_result(
             "订阅聚合状态：\n"
-            f"HTTP 出口：{http_state}，服务：{runner_state}\n"
-            f"HTTP 错误：{http_error}\n"
-            f"监听：{self.config.get('http_host', '0.0.0.0')}:{self.config.get('http_port', 8077)}\n"
-            f"订阅链接：{self._public_subscription_url()}\n"
-            f"最近刷新：{last_refresh_at}\n"
-            f"定时任务：{refresh_task_state}\n"
-            f"更新间隔：{interval} 分钟\n"
-            f"下次刷新：{self._refresh_next_at or '未排程'}\n"
-            f"定时任务错误：{self._refresh_last_error or '无'}\n"
-            f"节点数量：{node_count}\n"
-            f"输出格式：{output_format}\n"
-            f"本地文件：{await self.get_kv_data(KV_LAST_OUTPUT_FILE, '尚未生成')}\n"
-            f"全局 UA：{self._resolve_user_agent()}"
+            f"运行目录：{self.state.root}\n"
+            f"日志：{self.state.log_path}\n"
+            f"节点数：{metadata.get('node_count', 0)}\n"
+            f"源数量：{metadata.get('source_count', 0)}\n"
+            f"规则 profile：{self.config.get('rule_profile', 'metacubex')}\n"
+            f"HTTP：{http_status}\n"
+            f"HTTP 错误：{self._http_start_error or '无'}\n"
+            f"内部监听：{self.config.get('http_host', '127.0.0.1')}:{self.config.get('http_port', 8077)}\n"
+            f"公网订阅：{public_url}\n"
+            f"内部 health（仅 Tunnel）：{self.http_server.health_path}\n"
+            f"自动刷新：{'运行中' if self._refresh_task and not self._refresh_task.done() else '已停止'}\n"
+            f"下次刷新：{self._next_refresh_at or '未排程'}"
         )
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @subagg.command("refresh")
+    async def refresh_cmd(self, event: AstrMessageEvent):
+        yield event.plain_result(await self._refresh_once("手动刷新"))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @subagg.command("list")
     async def list_cmd(self, event: AstrMessageEvent):
         sources = self._sources()
         if not sources:
-            yield event.plain_result("还没有配置机场订阅 URL。")
+            yield event.plain_result("没有启用的订阅源。")
             return
-        lines = ["已配置机场："]
-        for index, item in enumerate(sources, start=1):
-            state = "启用" if item.get("enabled", True) else "停用"
-            lines.append(f"{index}. {item.get('name', '未命名')} [{state}]")
+        lines = ["已配置订阅源："]
+        for index, source in enumerate(sources, start=1):
+            kind = "本地文件" if str(source.get("source_type") or "").lower() == "local_file" else ("本地内容" if self._is_local(source) else "远程 URL")
+            state = "启用" if source.get("enabled", True) else "停用"
+            lines.append(f"{index}. {source.get('name', '未命名')} | {kind} | {state}")
         yield event.plain_result("\n".join(lines))
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @subagg.command("add")
     async def add_cmd(self, event: AstrMessageEvent, name: str, url: str):
+        if not url.lower().startswith(("http://", "https://")):
+            yield event.plain_result("订阅 URL 必须以 http:// 或 https:// 开头。")
+            return
         sources = list(self.config.get("subscription_sources", []))
         sources.append(
             {
                 "__template_key": "source",
                 "name": name,
+                "source_type": "remote",
                 "url": url,
+                "user_agent": "",
                 "priority": 100,
                 "enabled": True,
             }
         )
         self.config["subscription_sources"] = sources
         self.config.save_config()
-        yield event.plain_result(f"已添加机场订阅：{name}")
+        yield event.plain_result(f"已添加订阅源：{name}。请执行 /subagg refresh 验证。")
+
+    @filter.permission_type(filter.PermissionType.ADMIN)
+    @subagg.command("localfile")
+    async def localfile_cmd(self, event: AstrMessageEvent, name: str, source: str = ""):
+        try:
+            saved = await self._save_local_file(event, name, source)
+        except Exception as exc:
+            self.state.append_log("error", "local file import failed", source=name, error=type(exc).__name__)
+            yield event.plain_result(f"本地文件导入失败：{type(exc).__name__}。日志：{self.state.log_path}")
+            return
+        sources = [item for item in self.config.get("subscription_sources", []) if isinstance(item, dict)]
+        sources = [item for item in sources if str(item.get("name") or "") != name]
+        sources.append({
+            "__template_key": "source",
+            "name": name,
+            "source_type": "local_file",
+            "file_path": str(saved),
+            "original_name": saved.name,
+            "priority": 100,
+            "enabled": True,
+        })
+        self.config["subscription_sources"] = sources
+        self.config.save_config()
+        self.state.append_log("info", "local file imported", source=name, file=str(saved))
+        yield event.plain_result(f"已保存本地订阅文件：{name}\n路径：{saved}\n请执行 /subagg refresh 验证。")
+
+
+    async def _save_local_file(self, event: AstrMessageEvent, name: str, source: str) -> Path:
+        if source:
+            if source.lower().startswith(("http://", "https://")):
+                return await self.local_file_store.download_url(name, Path(source).name or "subscription.data", source)
+            return self.local_file_store.save_path(name, Path(source).name, source)
+        try:
+            from astrbot.core.message.components import File
+        except ImportError as exc:
+            raise RuntimeError("当前 AstrBot 没有 File 消息组件") from exc
+        file_segment = next((item for item in event.get_messages() if isinstance(item, File)), None)
+        if file_segment is None:
+            raise ValueError("请在同一条消息附带文件，或提供本地路径/URL")
+        original_name = str(getattr(file_segment, "name", "subscription.data") or "subscription.data")
+        local_path = str(getattr(file_segment, "file", "") or getattr(file_segment, "file_", ""))
+        if local_path and Path(local_path).is_file():
+            return self.local_file_store.save_path(name, original_name, local_path)
+        url = str(getattr(file_segment, "url", "") or "")
+        if not url:
+            local_path = await file_segment.get_file()
+            return self.local_file_store.save_path(name, original_name, str(local_path))
+        return await self.local_file_store.download_url(name, original_name, url)
 
     @filter.permission_type(filter.PermissionType.ADMIN)
     @subagg.command("remove")
     async def remove_cmd(self, event: AstrMessageEvent, name: str):
         before = list(self.config.get("subscription_sources", []))
-        after = [item for item in before if item.get("name") != name]
+        after = [source for source in before if str(source.get("name") or "") != name]
         self.config["subscription_sources"] = after
         self.config.save_config()
-        yield event.plain_result(f"已删除 {len(before) - len(after)} 条名称为 {name} 的订阅。")
-
-    @filter.permission_type(filter.PermissionType.ADMIN)
-    @subagg.command("refresh")
-    async def refresh_cmd(self, event: AstrMessageEvent):
-        await self._try_ensure_http_server()
-        result = await self.refresh_and_notify(reason="手动刷新", send_url=True)
-        yield event.plain_result(result)
-
-    async def refresh_and_notify(self, *, reason: str, send_url: bool = False) -> str:
-        await self._try_ensure_http_server()
-        async with self._refresh_lock:
-            try:
-                result = await self._refresh_once()
-            except Exception as exc:
-                message = f"订阅聚合失败（{reason}）：{exc}"
-                logger.exception(message)
-                if self.config.get("notify_on_error", True):
-                    await self._broadcast(message)
-                return message
-
-        if send_url:
-            await self._broadcast(
-                f"{reason}完成：{len(result['nodes'])} 个节点，输出格式：{result['output_format']}。\n"
-                f"本地文件：{result['output_file']}\n"
-                f"{self._public_subscription_url()}"
-            )
-
-        change_message = result.get("change_message") or ""
-        if change_message and self.config.get("notify_on_node_change", True):
-            await self._broadcast(change_message)
-
-        return (
-            f"{reason}完成：{len(result['nodes'])} 个节点，"
-            f"{len(result['failures'])} 个机场失败，输出格式：{result['output_format']}。\n"
-            f"本地文件：{result['output_file']}"
-        )
-
-    async def _refresh_once(self) -> dict[str, Any]:
-        sources = self._sources()
-        manual_sources = self._manual_node_sources()
-        if not sources and not manual_sources:
-            raise RuntimeError("没有启用的机场订阅 URL 或手动节点源")
-
-        fetched: list[FetchResult] = []
-        failures: list[str] = []
-        for source in sources:
-            name = str(source.get("name") or "未命名")
-            try:
-                user_agent = self._resolve_user_agent(str(source.get("user_agent") or ""))
-                logger.info("拉取订阅：%s，User-Agent：%s", name, user_agent)
-                raw = await self._fetch_text(str(source["url"]), user_agent=user_agent)
-                fetched.append(FetchResult(name=name, text=decode_subscription(raw)))
-            except Exception as exc:
-                failures.append(f"{name}: {exc}")
-                logger.exception("拉取订阅失败：%s", name)
-
-        fetched.extend(manual_sources)
-
-        if not fetched:
-            message = "没有成功加载任何订阅或手动节点"
-            if failures:
-                message += "：" + "；".join(failures)
-            raise RuntimeError(message)
-
-        previous = await self.get_kv_data(KV_LAST_FINGERPRINTS, [])
-        merge = merge_nodes(
-            [(item.name, item.text) for item in fetched],
-            previous,
-            deduplicate=bool(self.config.get("deduplicate_nodes", True)),
-            output_base64=bool(self.config.get("output_base64", True)),
-            output_format=str(self.config.get("output_format") or "auto"),
-            rule_profile=str(self.config.get("rule_profile") or "mihomo_ruleset"),
-            previous_nodes=await self._load_previous_nodes(),
-        )
-        if not merge.nodes:
-            raise RuntimeError("订阅拉取成功，但没有解析到支持的节点。请确认订阅不是页面、过期提示或需要特殊 UA。")
-
-        refreshed_at = datetime.now().isoformat(timespec="seconds")
-        output_file = self._save_output_files(
-            merge.output_text,
-            output_format=merge.output_format,
-            node_count=len(merge.nodes),
-            refreshed_at=refreshed_at,
-        )
-
-        await self.put_kv_data(KV_LAST_FINGERPRINTS, [node.fingerprint for node in merge.nodes])
-        await self.put_kv_data(KV_LAST_NODE_SNAPSHOT, [node.__dict__ for node in merge.nodes])
-        await self.put_kv_data(KV_LAST_OUTPUT, merge.output_text)
-        await self.put_kv_data(KV_LAST_OUTPUT_FORMAT, merge.output_format)
-        await self.put_kv_data(KV_LAST_OUTPUT_FILE, output_file)
-        await self.put_kv_data(KV_LAST_NODE_COUNT, len(merge.nodes))
-        await self.put_kv_data(KV_LAST_REFRESH_AT, refreshed_at)
-
-        if failures and self.config.get("notify_on_error", True):
-            await self._broadcast("部分订阅拉取失败：\n" + "\n".join(failures))
-
-        change_message = summarize_changes(
-            merge.added,
-            merge.removed,
-            updated=merge.updated,
-            max_names=min(50, max(1, int(self.config.get("max_change_names", 50)))),
-        )
-        return {
-            "nodes": merge.nodes,
-            "failures": failures,
-            "change_message": change_message,
-            "output_format": merge.output_format,
-            "output_file": output_file,
-        }
-
-    async def _fetch_text(self, url: str, *, user_agent: str) -> str:
-        session = await self._client()
-        timeout = aiohttp.ClientTimeout(total=int(self.config.get("request_timeout_seconds", 20)))
-        headers = {"User-Agent": user_agent}
-        async with session.get(url, timeout=timeout, headers=headers) as response:
-            response.raise_for_status()
-            return await response.text(errors="replace")
+        yield event.plain_result(f"已删除 {len(before) - len(after)} 个名为 {name} 的订阅源。")
 
     async def _refresh_loop(self):
-        while True:
+        while not self._stopping:
+            interval = max(1, int(self.config.get("refresh_interval_minutes") or 180))
+            self._next_refresh_at = (datetime.now() + timedelta(minutes=interval)).isoformat(timespec="seconds")
             try:
-                minutes = self._update_interval_minutes()
-                self._refresh_next_at = (
-                    datetime.now() + timedelta(minutes=minutes)
-                ).isoformat(timespec="seconds")
-                await asyncio.sleep(minutes * 60)
-                self._refresh_next_at = ""
-                await self.refresh_and_notify(reason="定时刷新")
-                self._refresh_last_error = ""
+                await asyncio.sleep(interval * 60)
+                self._next_refresh_at = ""
+                message = await self._refresh_once("定时刷新")
+                if "失败" in message and self.config.get("notify_on_error", True):
+                    await self._broadcast(message)
             except asyncio.CancelledError:
-                self._refresh_next_at = ""
+                self._next_refresh_at = ""
                 raise
-            except Exception as exc:
-                self._refresh_last_error = f"{type(exc).__name__}: {exc}"
-                logger.exception("订阅聚合定时刷新任务异常，5 秒后继续运行")
-                await asyncio.sleep(5)
 
-    async def _start_refresh_task(self):
-        if self._refresh_task and not self._refresh_task.done():
-            self._refresh_task.cancel()
-            await asyncio.gather(self._refresh_task, return_exceptions=True)
-        self._refresh_task = asyncio.create_task(self._refresh_loop())
-        self._refresh_task.add_done_callback(self._refresh_task_done)
-
-    def _refresh_task_done(self, task: asyncio.Task):
-        if self._stopping or task is not self._refresh_task:
-            return
-        if task.cancelled():
-            return
+    async def _refresh_once(self, reason: str) -> str:
         try:
-            error = task.exception()
-        except asyncio.CancelledError:
-            return
-        if error is None:
-            return
-        self._refresh_last_error = f"{type(error).__name__}: {error}"
-        logger.error("订阅聚合定时任务意外结束，将自动重建：%s", self._refresh_last_error)
-        self._refresh_task = asyncio.create_task(self._refresh_loop())
-        self._refresh_task.add_done_callback(self._refresh_task_done)
-
-    def _update_interval_minutes(self) -> int:
-        try:
-            return max(1, int(self.config.get("update_interval_minutes", 180)))
-        except (TypeError, ValueError):
-            self._refresh_last_error = "更新间隔配置无效，已回退为 180 分钟"
-            return 180
-    async def _client(self) -> aiohttp.ClientSession:
-        if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession()
-        return self._session
-
-    async def _ensure_http_server(self):
-        if not self.config.get("http_enable", True):
-            self._http_last_error = "后台配置 http_enable=false"
-            return
-        if self._web_runner:
-            return
-        app = web.Application()
-        app.router.add_get(self._subscription_path(), self._handle_subscription)
-        self._web_runner = web.AppRunner(app)
-        await self._web_runner.setup()
-        self._web_site = web.TCPSite(
-            self._web_runner,
-            str(self.config.get("http_host") or "0.0.0.0"),
-            int(self.config.get("http_port") or 8077),
-        )
-        await self._web_site.start()
-        self._http_last_error = ""
-        logger.info("订阅聚合 HTTP 服务已启动：%s", self._public_subscription_url())
-
-    async def _try_ensure_http_server(self):
-        try:
-            await self._ensure_http_server()
+            report = await self.refresh_service.refresh(self._sources())
         except Exception as exc:
-            self._http_last_error = f"{type(exc).__name__}: {exc}"
-            logger.exception("订阅聚合 HTTP 服务启动失败：%s", self._http_last_error)
-            if self._web_runner:
-                await self._web_runner.cleanup()
-            self._web_runner = None
-            self._web_site = None
+            self.state.append_log("error", "refresh failed", reason=reason, error=type(exc).__name__)
+            logger.exception("订阅刷新失败：%s", type(exc).__name__)
+            return f"{reason}失败：{type(exc).__name__}"
+        return self._format_refresh_report(reason, report)
 
-    async def _handle_subscription(self, request: web.Request) -> web.Response:
-        token = request.match_info.get("token", "")
-        if token != self.config.get("access_token"):
-            return web.Response(status=404, text="not found")
-        output = await self.get_kv_data(KV_LAST_OUTPUT, "")
-        if not output:
-            await self.refresh_and_notify(reason="首次访问刷新")
-            output = await self.get_kv_data(KV_LAST_OUTPUT, "")
-        output_format = await self.get_kv_data(KV_LAST_OUTPUT_FORMAT, "base64")
-        content_type = "text/yaml" if output_format == "clash_yaml" else "text/plain"
-        return web.Response(
-            text=output,
-            content_type=content_type,
-            charset="utf-8",
-            headers={"subscription-userinfo": "upload=0; download=0; total=0; expire=0"},
-        )
+    def _format_refresh_report(self, reason: str, report: RefreshReport) -> str:
+        if report.published:
+            changes = f"新增 {len(report.added)}，更新 {len(report.updated)}，移除 {len(report.removed)}"
+            return f"{reason}完成：{len(report.nodes)} 个节点；{changes}。"
+        return f"{reason}未发布新结果：{len(report.issues)} 项输入问题，已保留上次成功订阅。"
 
-    async def _load_previous_nodes(self) -> list[NodeInfo]:
-        snapshot = await self.get_kv_data(KV_LAST_NODE_SNAPSHOT, [])
-        if not isinstance(snapshot, list):
-            return []
-        nodes: list[NodeInfo] = []
-        for item in snapshot:
-            if not isinstance(item, dict):
-                continue
-            try:
-                nodes.append(
-                    NodeInfo(
-                        raw=str(item.get("raw") or ""),
-                        name=str(item.get("name") or ""),
-                        fingerprint=str(item.get("fingerprint") or ""),
-                        source=str(item.get("source") or ""),
-                    )
-                )
-            except Exception:
-                continue
-        return nodes
+    def _sources(self) -> list[dict]:
+        sources = [source for source in self.config.get("subscription_sources", []) if isinstance(source, dict)]
+        return sorted(sources, key=lambda source: int(source.get("priority", 100)))
 
-    def _sources(self) -> list[dict[str, Any]]:
-        sources = [
-            item
-            for item in self.config.get("subscription_sources", [])
-            if item.get("enabled", True) and item.get("url")
-        ]
-        return sorted(sources, key=self._priority)
+    @staticmethod
+    def _is_local(source: dict) -> bool:
+        return str(source.get("source_type") or "remote").lower() in {"local", "yaml", "upload", "local_file"}
 
-    def _manual_node_sources(self) -> list[FetchResult]:
-        manual_sources: list[FetchResult] = []
-        items = [
-            item
-            for item in self.config.get("manual_node_sources", [])
-            if item.get("enabled", True)
-        ]
-        for item in sorted(items, key=self._priority):
-            if not item.get("enabled", True):
-                continue
-            nodes_text = str(item.get("nodes") or "").strip()
-            if not nodes_text:
-                continue
-            name = str(item.get("name") or "manual").strip() or "manual"
-            ua = str(item.get("user_agent") or "").strip()
-            if ua:
-                logger.info("加载手动节点源：%s，标记 UA：%s", name, ua)
-            manual_sources.append(FetchResult(name=name, text=decode_subscription(nodes_text)))
-        return manual_sources
+    def _runtime_dir(self) -> Path:
+        configured = os.environ.get("ASTRBOT_SUBAGG_RUNTIME_DIR") or str(self.config.get("runtime_dir") or "").strip()
+        return Path(configured) if configured else Path("/AstrBot/data/runtime") / PLUGIN_NAME
 
-    def _ensure_token(self):
+    def _ensure_access_token(self) -> None:
         if not self.config.get("access_token"):
-            self.config["access_token"] = secrets.token_urlsafe(12)
+            self.config["access_token"] = secrets.token_urlsafe(24)
             self.config.save_config()
 
-    def _priority(self, item: dict[str, Any]) -> int:
-        try:
-            return int(item.get("priority", 100))
-        except (TypeError, ValueError):
-            return 100
-
-    def _resolve_user_agent(self, source_user_agent: str = "") -> str:
-        source_user_agent = source_user_agent.strip()
-        if source_user_agent:
-            return source_user_agent
-
-        preset = str(self.config.get("user_agent_preset") or "mihomo").strip().lower()
-        if preset != "custom" and preset in UA_PRESETS:
-            return UA_PRESETS[preset]
-
-        custom = str(self.config.get("user_agent") or "").strip()
-        if custom:
-            return custom
-
-        return UA_PRESETS["mihomo"]
-
-    def _save_output_files(
-        self,
-        output: str,
-        *,
-        output_format: str,
-        node_count: int,
-        refreshed_at: str,
-    ) -> str:
-        if not self.config.get("save_local_files", True):
-            return "未启用本地文件保存"
-
-        output_dir = self._local_output_dir()
-        output_dir.mkdir(parents=True, exist_ok=True)
-        basename = str(self.config.get("local_output_basename") or "merged-subscription").strip() or "merged-subscription"
-        suffix = {
-            "clash_yaml": ".yaml",
-            "base64": ".base64.txt",
-            "plain": ".txt",
-        }.get(output_format, ".txt")
-        output_path = output_dir / f"{basename}{suffix}"
-        latest_path = output_dir / f"{basename}.latest"
-        metadata_path = output_dir / f"{basename}.metadata.json"
-        output_path.write_text(output, encoding="utf-8")
-        latest_path.write_text(output, encoding="utf-8")
-        metadata_path.write_text(
-            json.dumps(
-                {
-                    "refreshed_at": refreshed_at,
-                    "output_format": output_format,
-                    "node_count": node_count,
-                    "output_file": str(output_path),
-                    "latest_file": str(latest_path),
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
-        logger.info("订阅聚合结果已保存到本地文件：%s", output_path)
-        return str(output_path)
-    def _local_output_dir(self) -> Path:
-        configured = str(self.config.get("local_output_dir") or "").strip()
-        if configured:
-            return Path(configured)
-        return Path(__file__).resolve().parent
-
-    def _subscription_path(self) -> str:
-        prefix = str(self.config.get("path_prefix") or "/sub").strip("/") or "sub"
-        return f"/{prefix}/{{token}}"
-
     def _public_subscription_url(self) -> str:
-        token = self.config.get("access_token")
-        prefix = str(self.config.get("path_prefix") or "/sub").strip("/") or "sub"
-        base_url = str(self.config.get("public_base_url") or "").strip()
-        if not base_url:
-            host = self.config.get("http_host") or "127.0.0.1"
-            if host == "0.0.0.0":
-                host = "你的公网IP或域名"
-            base_url = f"http://{host}:{self.config.get('http_port', 8077)}"
-        return urljoin(base_url.rstrip("/") + "/", f"{prefix}/{token}")
+        token = str(self.config.get("access_token") or "")
+        prefix = SUBSCRIPTION_PREFIX.strip("/")
+        base = str(os.environ.get("ASTRBOT_SUBAGG_PUBLIC_BASE_URL") or self.config.get("public_base_url") or "https://bot.tomori.cloud").strip()
+        return urljoin(base.rstrip("/") + "/", f"{prefix}/{token}")
 
-    async def _broadcast(self, text: str):
-        targets = self.config.get("notify_targets", [])
-        if not targets:
-            logger.warning("订阅聚合通知未发送：尚未绑定 notify_targets。内容：%s", text)
-            return
-        chain = MessageChain().message(text)
-        for target in targets:
+    async def _broadcast(self, text: str) -> None:
+        for target in self.config.get("notify_targets", []):
             try:
-                await self.context.send_message(target, chain)
+                await self.context.send_message(target, MessageChain().message(text))
             except Exception:
-                logger.exception("订阅聚合通知发送失败：%s", target)
+                logger.exception("订阅聚合通知发送失败")
+
+    def _runner_active(self) -> bool:
+        return self.http_server._runner is not None

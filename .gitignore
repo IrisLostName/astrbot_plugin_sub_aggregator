@@ -4,11 +4,8 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.log
-merged-subscription*.yaml
-merged-subscription*.txt
-merged-subscription*.latest
-merged-subscription*.json
-
-# 本地发布检查产物
-dist/
-*.zip
+runtime/
+merged-subscription*
+*.latest
+*.metadata.json
+*.base64.txt

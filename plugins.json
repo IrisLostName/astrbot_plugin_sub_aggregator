@@ -1,55 +1,31 @@
 {
   "$meta": {
     "schema_version": 1,
-    "name": "IrisLostName AstrBot Plugin Market",
-    "version": "2026-08-16",
-    "homepage": "https://github.com/IrisLostName",
-    "repository": "https://github.com/IrisLostName/astrbot_plugin_sub_aggregator",
-    "description": "IrisLostName 发布的 AstrBot 插件市场源。",
-    "updated_at": "2026-08-16T11:02:30Z"
+    "name": "chenh AstrBot Plugins",
+    "description": "AstrBot plugins maintained by chenh"
   },
   "chenh/astrbot_plugin_sub_aggregator": {
     "author": "chenh",
     "name": "astrbot_plugin_sub_aggregator",
-    "version": "0.3.1",
+    "version": "0.3.4",
     "repo": "https://github.com/IrisLostName/astrbot_plugin_sub_aggregator",
+    "desc": "按内容识别并聚合远程、本地和上传的订阅，输出 Mihomo/Clash YAML。",
     "display_name": "订阅聚合助手",
-    "short_desc": "多机场订阅聚合与变化通知。",
-    "desc": "聚合多个机场订阅 URL，保留来源备注并输出 Clash/Mihomo 总订阅，支持自定义 UA、定时拉取、规则模板和节点变化通知。",
+    "short_desc": "多协议订阅聚合与 Mihomo YAML 输出。",
     "astrbot_version": ">=4.10.4,<5",
-    "support_platforms": [
-      "qq_official",
-      "qq_official_webhook"
-    ],
-    "social_link": "https://github.com/IrisLostName",
-    "tags": [
-      "Clash",
-      "Mihomo",
-      "订阅聚合",
-      "代理"
-    ],
-    "updated_at": "2026-08-16T11:02:30Z"
+    "support_platforms": ["qq_official", "qq_official_webhook"],
+    "tags": ["Clash", "Mihomo", "订阅聚合"]
   },
   "chenh/astrbot_plugin_cloudflare_tunnel": {
     "author": "chenh",
     "name": "astrbot_plugin_cloudflare_tunnel",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "repo": "https://github.com/IrisLostName/astrbot_plugin_cloudflare_tunnel",
+    "desc": "守护 cloudflared 子进程，检查内部回源并在故障时通知。",
     "display_name": "Cloudflare Tunnel 守护",
-    "short_desc": "Cloudflare Tunnel 守护与 Bot 后台故障通知。",
-    "desc": "独立守护 cloudflared，并在 Bot 后台连续故障时重启和通知。",
+    "short_desc": "cloudflared 生命周期、健康检查与熔断通知。",
     "astrbot_version": ">=4.10.4,<5",
-    "support_platforms": [
-      "qq_official",
-      "qq_official_webhook"
-    ],
-    "social_link": "https://github.com/IrisLostName",
-    "tags": [
-      "Cloudflare",
-      "Tunnel",
-      "cloudflared",
-      "守护"
-    ],
-    "updated_at": "2026-08-16T11:02:30Z"
+    "support_platforms": ["qq_official", "qq_official_webhook"],
+    "tags": ["Cloudflare", "Tunnel", "cloudflared"]
   }
 }
