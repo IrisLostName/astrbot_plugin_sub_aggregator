@@ -10,9 +10,6 @@ def tag_source_name(name: str, source: str) -> str:
     source = source.strip()
     if not source or f"[{source}]" in name:
         return name
-    if name and _is_emoji_prefix(name):
-        prefix, remainder = _split_emoji_prefix(name)
-        return f"{prefix}[{source}]" + (f" {remainder}" if remainder else "")
     return f"[{source}]{name}"
 
 
@@ -37,14 +34,3 @@ def _sorted(value):
     if isinstance(value, list):
         return tuple(_sorted(item) for item in value)
     return value
-
-
-def _is_emoji_prefix(value: str) -> bool:
-    return bool(value and ord(value[0]) >= 0x2600)
-
-
-def _split_emoji_prefix(value: str) -> tuple[str, str]:
-    index = 0
-    while index < len(value) and (ord(value[index]) >= 0x2600 or value[index].isspace()):
-        index += 1
-    return value[:index].strip(), value[index:].strip()

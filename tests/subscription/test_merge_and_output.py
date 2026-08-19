@@ -6,7 +6,7 @@ def test_merge_tags_sources_and_deduplicates_by_connection():
     proxy = {"name": "🇭🇰 Hong Kong", "type": "ss", "server": "example.com", "port": 443, "cipher": "aes-128-gcm", "password": "test"}
     current, added, updated, removed = merge_nodes([("airport-a", [proxy]), ("airport-b", [proxy])])
     assert len(current) == 1
-    assert current[0].name.startswith("🇭🇰[airport-a]")
+    assert current[0].name.startswith("[airport-a]🇭🇰")
     assert len(added) == 1
     assert not updated
     assert not removed
