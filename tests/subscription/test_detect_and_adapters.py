@@ -89,7 +89,22 @@ def test_hysteria2_tuic_and_ss2022_convert():
     assert ss["cipher"].startswith("2022-")
 
 
-def test_vmess_required_fields_and_transport():
+def test_vless_tcp_transport_uses_mihomo_default():
+    raw = "vless://00000000-0000-0000-0000-000000000000@example.com:443?type=tcp&security=none"
+    proxy = convert_share_link(raw, "vless-tcp")
+    assert proxy["type"] == "vless"
+    assert "network" not in proxy
+
+
+
+    payload = {"v": "2", "ps": "vmess-tcp", "add": "example.com", "port": "443", "id": "uuid", "aid": "0", "scy": "auto", "tls": "tls", "net": "tcp"}
+    raw = "vmess://" + base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
+    proxy = convert_share_link(raw, "vmess-tcp")
+    assert proxy["type"] == "vmess"
+    assert "network" not in proxy
+
+
+
     payload = {"v": "2", "ps": "vmess", "add": "example.com", "port": "443", "id": "uuid", "aid": "0", "scy": "auto", "tls": "tls", "net": "grpc", "path": "service"}
     raw = "vmess://" + base64.urlsafe_b64encode(json.dumps(payload).encode()).decode().rstrip("=")
     proxy = convert_share_link(raw, "vmess")

@@ -2,7 +2,7 @@ name: astrbot_plugin_sub_aggregator
 display_name: 订阅聚合助手
 desc: 按内容识别并聚合远程、本地和上传的订阅，输出 Mihomo/Clash YAML。
 short_desc: 多协议订阅聚合与 Mihomo YAML 输出。
-version: 0.3.8
+version: 0.3.9
 author: chenh
 repo: https://github.com/IrisLostName/astrbot_plugin_sub_aggregator
 astrbot_version: ">=4.10.4,<5"

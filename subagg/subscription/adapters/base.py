@@ -63,6 +63,8 @@ def apply_transport(proxy: dict[str, Any], query: dict[str, str], protocol: str)
     network = (query.get("type") or query.get("network") or "").lower()
     if not network:
         return
+    if network == "tcp":
+        return
     if network not in {"ws", "http", "h2", "grpc", "xhttp"}:
         raise AdapterError(protocol, f"不支持的传输层: {network}")
     proxy["network"] = network
