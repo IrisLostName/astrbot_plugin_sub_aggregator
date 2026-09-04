@@ -460,26 +460,31 @@ def build_singbox_config(
         "dns": {
             "servers": [
                 {
+                    "type": "https",
                     "tag": "dns-cn",
-                    "address": "https://223.5.5.5/dns-query",
-                    "address_resolver": "dns-local",
-                    "detour": "DIRECT"
+                    "server": "223.5.5.5",
+                    "server_port": 443,
+                    "path": "/dns-query",
+                    "tls": {
+                        "enabled": True,
+                        "server_name": "dns.alidns.com"
+                    }
                 },
                 {
+                    "type": "https",
                     "tag": "dns-global",
-                    "address": "https://1.1.1.1/dns-query",
-                    "address_resolver": "dns-local",
+                    "server": "1.1.1.1",
+                    "server_port": 443,
+                    "path": "/dns-query",
+                    "tls": {
+                        "enabled": True,
+                        "server_name": "cloudflare-dns.com"
+                    },
                     "detour": "PROXY"
-                },
-                {
-                    "tag": "dns-local",
-                    "address": "local",
-                    "detour": "DIRECT"
-                },
-                {"tag": "dns-block", "address": "rcode://success"}
+                }
             ],
             "rules": [
-                {"rule_set": "geosite-cn", "server": "dns-cn"} if rule_sets else {},
+                {"rule_set": "geosite-cn", "action": "route", "server": "dns-cn"} if rule_sets else {},
             ],
             "final": "dns-global",
             "strategy": "prefer_ipv4",
