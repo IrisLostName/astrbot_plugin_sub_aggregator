@@ -345,180 +345,145 @@ def build_singbox_config(
         AdapterError: If any proxy conversion fails
     """
     seen_tags: dict[str, int] = {}
-    outbounds: list[dict[str, Any]] = []
+    node_outbounds: list[dict[str, Any]] = []
     node_tags: list[str] = []
 
+    # Convert all proxies to outbounds
     for proxy in proxies:
         name = proxy.get("name", "Unnamed")
         tag = _make_unique_tag(name, seen_tags)
-
         outbound = mihomo_to_singbox_outbound(proxy, tag)
-        outbounds.append(outbound)
+        node_outbounds.append(outbound)
         node_tags.append(tag)
 
-    outbounds.extend([
+    # Build final outbounds: selector first, then all nodes, then direct/block
+    outbounds = [
         {
             "type": "selector",
-            "tag": "PROXY",
-            "outbounds": ["自动选择"] + node_tags
-        },
-        {
-            "type": "urltest",
-            "tag": "自动选择",
+            "tag": "proxy",
             "outbounds": node_tags,
-            "url": "https://www.gstatic.com/generate_204",
-            "interval": "10m"
-        },
+            "default": node_tags[0] if node_tags else "direct"
+        }
+    ]
+    outbounds.extend(node_outbounds)
+    outbounds.extend([
         {
             "type": "direct",
-            "tag": "DIRECT"
-        },
-        {
-            "type": "dns",
-            "tag": "dns-out"
+            "tag": "direct"
         },
         {
             "type": "block",
-            "tag": "REJECT"
+            "tag": "block"
         }
     ])
 
-    route_rules = []
-    rule_sets = []
-
-    if rule_set_source == "sagernet":
-        rule_sets = [
-            {
-                "tag": "geosite-cn",
-                "type": "remote",
-                "format": "binary",
-                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
-                "download_detour": "DIRECT"
-            },
-            {
-                "tag": "geosite-geolocation-!cn",
-                "type": "remote",
-                "format": "binary",
-                "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-geolocation-!cn.srs",
-                "download_detour": "DIRECT"
-            },
-            {
-                "tag": "geoip-cn",
-                "type": "remote",
-                "format": "binary",
-                "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
-                "download_detour": "DIRECT"
-            }
-        ]
-        route_rules = [
-            {"rule_set": "geosite-cn", "outbound": "DIRECT"},
-            {"rule_set": "geoip-cn", "outbound": "DIRECT"}
-        ]
-    elif rule_set_source == "metacubex":
-        rule_sets = [
-            {
-                "tag": "geosite-cn",
-                "type": "remote",
-                "format": "binary",
-                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geosite/cn.srs",
-                "download_detour": "DIRECT"
-            },
-            {
-                "tag": "geoip-cn",
-                "type": "remote",
-                "format": "binary",
-                "url": "https://raw.githubusercontent.com/MetaCubeX/meta-rules-dat/sing/geo/geoip/cn.srs",
-                "download_detour": "DIRECT"
-            }
-        ]
-        route_rules = [
-            {"rule_set": "geosite-cn", "outbound": "DIRECT"},
-            {"rule_set": "geoip-cn", "outbound": "DIRECT"}
-        ]
-    elif rule_set_source == "custom" and custom_rule_set_urls:
-        if "geosite_cn" in custom_rule_set_urls:
-            rule_sets.append({
-                "tag": "geosite-cn",
-                "type": "remote",
-                "format": "binary",
-                "url": custom_rule_set_urls["geosite_cn"],
-                "download_detour": "DIRECT"
-            })
-            route_rules.append({"rule_set": "geosite-cn", "outbound": "DIRECT"})
-
-        if "geoip_cn" in custom_rule_set_urls:
-            rule_sets.append({
-                "tag": "geoip-cn",
-                "type": "remote",
-                "format": "binary",
-                "url": custom_rule_set_urls["geoip_cn"],
-                "download_detour": "DIRECT"
-            })
-            route_rules.append({"rule_set": "geoip-cn", "outbound": "DIRECT"})
+    # Rule sets (matching template structure with http_client and update_interval)
+    rule_sets = [
+        {
+            "type": "remote",
+            "tag": "geosite-cn",
+            "format": "binary",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geosite/rule-set/geosite-cn.srs",
+            "http_client": "rules-via-proxy",
+            "update_interval": "1d"
+        },
+        {
+            "type": "remote",
+            "tag": "geoip-cn",
+            "format": "binary",
+            "url": "https://raw.githubusercontent.com/SagerNet/sing-geoip/rule-set/geoip-cn.srs",
+            "http_client": "rules-via-proxy",
+            "update_interval": "1d"
+        }
+    ]
 
     config = {
+        "$schema": "https://sing-box.sagernet.org/schema.json",
+        "log": {
+            "level": "info",
+            "timestamp": True
+        },
         "dns": {
             "servers": [
                 {
                     "type": "https",
-                    "tag": "remote-dns",
-                    "server": "1.1.1.1",
+                    "tag": "dns-cn",
+                    "server": "223.5.5.5",
                     "server_port": 443,
-                    "path": "/dns-query"
+                    "path": "/dns-query",
+                    "tls": {
+                        "enabled": True,
+                        "server_name": "dns.alidns.com"
+                    }
                 },
                 {
-                    "type": "local",
-                    "tag": "local-dns"
+                    "type": "https",
+                    "tag": "dns-global",
+                    "server": "1.1.1.1",
+                    "server_port": 443,
+                    "path": "/dns-query",
+                    "tls": {
+                        "enabled": True,
+                        "server_name": "cloudflare-dns.com"
+                    },
+                    "detour": "proxy"
                 }
             ],
             "rules": [
                 {
-                    "rule_set": ["geosite-cn"] if rule_sets else [],
+                    "rule_set": ["geosite-cn"],
                     "action": "route",
-                    "server": "local-dns"
+                    "server": "dns-cn"
                 }
             ],
-            "final": "remote-dns"
+            "final": "dns-global",
+            "strategy": "prefer_ipv4",
+            "reverse_mapping": True
         },
+        "http_clients": [
+            {
+                "tag": "rules-via-proxy",
+                "detour": "proxy"
+            }
+        ],
         "inbounds": [
             {
                 "type": "tun",
-                "tag": "singtun0",
-                "inet4_address": "172.19.0.1/30",
+                "tag": "tun-in",
+                "interface_name": "singtun0",
+                "address": [
+                    "172.19.0.1/30",
+                    "fdfe:dcba:9876::1/126"
+                ],
+                "mtu": 1500,
                 "auto_route": True,
                 "strict_route": True,
-                "stack": "mixed",
-                "sniff": True,
-                "sniff_override_destination": False
-            },
-            {"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 7890, "sniff": True}
+                "dns_mode": "hijack",
+                "stack": "mixed"
+            }
         ],
         "outbounds": outbounds,
         "route": {
             "rules": [
-                {"protocol": "dns", "outbound": "dns-out"},
-                {"ip_is_private": True, "outbound": "DIRECT"}
-            ] + route_rules,
+                {"action": "sniff"},
+                {"protocol": "dns", "action": "hijack-dns"},
+                {"ip_is_private": True, "action": "route", "outbound": "direct"},
+                {"rule_set": ["geosite-cn"], "action": "route", "outbound": "direct"},
+                {"rule_set": ["geoip-cn"], "action": "route", "outbound": "direct"}
+            ],
             "rule_set": rule_sets,
-            "final": "PROXY",
-            "auto_detect_interface": True
+            "final": "proxy",
+            "auto_detect_interface": True,
+            "default_http_client": "rules-via-proxy",
+            "default_domain_resolver": "dns-cn"
         },
         "experimental": {
-            "clash_api": {
-                "external_controller": "127.0.0.1:9090",
-                "secret": clash_api_secret
+            "cache_file": {
+                "enabled": True,
+                "path": "cache.db",
+                "store_dns": True
             }
-        },
-        "ntp": {
-            "enabled": True,
-            "server": ntp_server,
-            "server_port": 123,
-            "interval": "30m",
-            "detour": "DIRECT"
         }
     }
-
-    if not rule_sets:
-        config["dns"]["rules"] = []
 
     return json.dumps(config, indent=2, ensure_ascii=False)
