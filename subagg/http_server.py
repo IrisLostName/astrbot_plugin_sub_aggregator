@@ -27,6 +27,7 @@ class SubscriptionHttpServer:
         app.router.add_get(f"{self.path_prefix}/{{token}}", self.handle_subscription)
         app.router.add_get(f"{self.path_prefix}/{{token}}/clash", self.handle_clash_subscription)
         app.router.add_get(f"{self.path_prefix}/{{token}}/singbox", self.handle_singbox_subscription)
+        app.router.add_get(f"{self.path_prefix}/test/singbox", self.handle_test_singbox_subscription)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.host, self.port)
@@ -66,4 +67,10 @@ class SubscriptionHttpServer:
         output = self.state.load_singbox_output()
         if not output:
             raise web.HTTPServiceUnavailable(text="sing-box subscription is not ready")
+        return web.Response(text=output, content_type="application/json", charset="utf-8")
+
+    async def handle_test_singbox_subscription(self, request: web.Request) -> web.Response:
+        output = self.state.load_singbox_output()
+        if not output:
+            raise web.HTTPServiceUnavailable(text="sing-box test subscription is not ready")
         return web.Response(text=output, content_type="application/json", charset="utf-8")

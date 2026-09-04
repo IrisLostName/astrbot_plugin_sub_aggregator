@@ -448,25 +448,16 @@ def build_singbox_config(
         ],
         "inbounds": [
             {
-                "type": "tun",
-                "tag": "tun-in",
-                "interface_name": "singtun0",
-                "address": [
-                    "172.19.0.1/30",
-                    "fdfe:dcba:9876::1/126"
-                ],
-                "mtu": 1500,
-                "auto_route": True,
-                "strict_route": True,
-                "dns_mode": "hijack",
-                "stack": "mixed"
+                "type": "mixed",
+                "tag": "mixed-in",
+                "listen": "127.0.0.1",
+                "listen_port": 2080
             }
         ],
         "outbounds": outbounds,
         "route": {
             "rules": [
                 {"action": "sniff"},
-                {"protocol": "dns", "action": "hijack-dns"},
                 {"ip_is_private": True, "action": "route", "outbound": "direct"},
                 {"rule_set": ["geosite-cn"], "action": "route", "outbound": "direct"},
                 {"rule_set": ["geoip-cn"], "action": "route", "outbound": "direct"}
