@@ -374,6 +374,10 @@ def build_singbox_config(
             "tag": "DIRECT"
         },
         {
+            "type": "dns",
+            "tag": "dns-out"
+        },
+        {
             "type": "block",
             "tag": "REJECT"
         }
@@ -456,34 +460,50 @@ def build_singbox_config(
         "dns": {
             "servers": [
                 {
-                    "tag": "dns_proxy",
-                    "address": "fakeip",
-                    "address_resolver": "dns_resolver"
+                    "tag": "dns-cn",
+                    "address": "https://223.5.5.5/dns-query",
+                    "address_resolver": "dns-local",
+                    "detour": "DIRECT"
                 },
-                {"tag": "dns_direct", "address": "https://223.5.5.5/dns-query", "detour": "DIRECT"},
-                {"tag": "dns_resolver", "address": "https://1.1.1.1/dns-query", "detour": "PROXY"},
-                {"tag": "dns_block", "address": "rcode://success"}
+                {
+                    "tag": "dns-global",
+                    "address": "https://1.1.1.1/dns-query",
+                    "address_resolver": "dns-local",
+                    "detour": "PROXY"
+                },
+                {
+                    "tag": "dns-local",
+                    "address": "local",
+                    "detour": "DIRECT"
+                },
+                {"tag": "dns-block", "address": "rcode://success"}
             ],
             "rules": [
-                {"rule_set": "geosite-cn", "server": "dns_direct"} if rule_sets else {},
+                {"rule_set": "geosite-cn", "server": "dns-cn"} if rule_sets else {},
             ],
-            "final": "dns_proxy",
+            "final": "dns-global",
             "strategy": "prefer_ipv4",
-            "disable_cache": False,
-            "disable_expire": False,
-            "independent_cache": False,
-            "fakeip": {
-                "enabled": True,
-                "inet4_range": "198.18.0.0/15",
-                "inet6_range": "fc00::/18"
-            }
+            "reverse_mapping": True
         },
         "inbounds": [
-            {"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 7890}
+            {
+                "type": "tun",
+                "tag": "singtun0",
+                "inet4_address": "172.19.0.1/30",
+                "auto_route": True,
+                "strict_route": True,
+                "stack": "mixed",
+                "sniff": True,
+                "sniff_override_destination": False
+            },
+            {"type": "mixed", "tag": "mixed-in", "listen": "127.0.0.1", "listen_port": 7890, "sniff": True}
         ],
         "outbounds": outbounds,
         "route": {
-            "rules": route_rules,
+            "rules": [
+                {"protocol": "dns", "outbound": "dns-out"},
+                {"ip_is_private": True, "outbound": "DIRECT"}
+            ] + route_rules,
             "rule_set": rule_sets,
             "final": "PROXY",
             "auto_detect_interface": True
