@@ -455,8 +455,13 @@ def build_singbox_config(
     config = {
         "dns": {
             "servers": [
-                {"tag": "dns_proxy", "address": "https://1.1.1.1/dns-query", "detour": "PROXY"},
+                {
+                    "tag": "dns_proxy",
+                    "address": "fakeip",
+                    "address_resolver": "dns_resolver"
+                },
                 {"tag": "dns_direct", "address": "https://223.5.5.5/dns-query", "detour": "DIRECT"},
+                {"tag": "dns_resolver", "address": "https://1.1.1.1/dns-query", "detour": "PROXY"},
                 {"tag": "dns_block", "address": "rcode://success"}
             ],
             "rules": [
