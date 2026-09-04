@@ -461,34 +461,24 @@ def build_singbox_config(
             "servers": [
                 {
                     "type": "https",
-                    "tag": "dns-cn",
-                    "server": "223.5.5.5",
-                    "server_port": 443,
-                    "path": "/dns-query",
-                    "tls": {
-                        "enabled": True,
-                        "server_name": "dns.alidns.com"
-                    }
-                },
-                {
-                    "type": "https",
-                    "tag": "dns-global",
+                    "tag": "remote-dns",
                     "server": "1.1.1.1",
                     "server_port": 443,
-                    "path": "/dns-query",
-                    "tls": {
-                        "enabled": True,
-                        "server_name": "cloudflare-dns.com"
-                    },
-                    "detour": "PROXY"
+                    "path": "/dns-query"
+                },
+                {
+                    "type": "local",
+                    "tag": "local-dns"
                 }
             ],
             "rules": [
-                {"rule_set": "geosite-cn", "action": "route", "server": "dns-cn"} if rule_sets else {},
+                {
+                    "rule_set": ["geosite-cn"] if rule_sets else [],
+                    "action": "route",
+                    "server": "local-dns"
+                }
             ],
-            "final": "dns-global",
-            "strategy": "prefer_ipv4",
-            "reverse_mapping": True
+            "final": "remote-dns"
         },
         "inbounds": [
             {
