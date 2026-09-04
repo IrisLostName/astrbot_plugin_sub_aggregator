@@ -22,20 +22,7 @@
   },
   "user_agent": {"type": "string", "description": "全局 User-Agent", "default": "clash-verge"},
   "rule_profile": {"type": "string", "description": "Mihomo DNS 与规则 profile：metacubex 或 minimal", "default": "metacubex"},
-  "singbox_profile": {
-    "type": "dict",
-    "description": "sing-box 订阅配置",
-    "default": {
-      "rule_set_source": "sagernet",
-      "ntp_server": "time.apple.com",
-      "clash_api_secret": ""
-    },
-    "items": {
-      "rule_set_source": {"type": "string", "description": "规则集来源：sagernet / metacubex / none", "default": "sagernet"},
-      "ntp_server": {"type": "string", "description": "NTP 服务器", "default": "time.apple.com"},
-      "clash_api_secret": {"type": "string", "description": "Clash API 控制器密钥", "default": ""}
-    }
-  },
+  "singbox_tun_enable": {"type": "bool", "description": "sing-box 输出是否启用纯 TUN；关闭后不生成任何入站", "default": true},
   "request_timeout_seconds": {"type": "int", "description": "请求超时", "default": 20},
   "runtime_dir": {"type": "string", "description": "持久化运行目录", "default": ""},
   "http_enable": {"type": "bool", "description": "启用订阅 HTTP", "default": true},

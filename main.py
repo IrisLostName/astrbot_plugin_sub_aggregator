@@ -50,9 +50,7 @@ class SubscriptionAggregatorPlugin(Star):
             user_agent=str(config.get("user_agent") or "clash-verge"),
             timeout_seconds=int(config.get("request_timeout_seconds") or 20),
             rule_profile=str(config.get("rule_profile") or "metacubex"),
-            singbox_rule_set_source=str(config.get("singbox_profile", {}).get("rule_set_source") or "sagernet"),
-            singbox_ntp_server=str(config.get("singbox_profile", {}).get("ntp_server") or "time.apple.com"),
-            singbox_clash_api_secret=str(config.get("singbox_profile", {}).get("clash_api_secret") or ""),
+            tun_enabled=bool(config.get("singbox_tun_enable", True)),
         )
         self.http_server = SubscriptionHttpServer(
             self.state,
@@ -146,7 +144,7 @@ class SubscriptionAggregatorPlugin(Star):
             f"节点数：{metadata.get('node_count', 0)}\n"
             f"源数量：{metadata.get('source_count', 0)}\n"
             f"规则 profile：{self.config.get('rule_profile', 'metacubex')}\n"
-            f"sing-box 规则集：{self.config.get('singbox_profile', {}).get('rule_set_source', 'sagernet')}\n"
+            f"sing-box：纯 TUN（可在配置中开关），IPv4-only selector；Clash API 支持直连/规则/全局模式\n"
             f"本地 Mihomo YAML：{self.state.output_path}\n"
             f"本地 sing-box JSON：{self.state.singbox_output_path}\n"
             f"HTTP：{http_status}\n"

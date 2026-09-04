@@ -39,15 +39,11 @@ class RefreshService:
         user_agent: str = "clash-verge",
         timeout_seconds: int = 20,
         rule_profile: str = "metacubex",
-        singbox_rule_set_source: str = "sagernet",
-        singbox_ntp_server: str = "time.apple.com",
-        singbox_clash_api_secret: str = ""
+        tun_enabled: bool = True,
     ):
         self.state = state
         self.rule_profile = rule_profile
-        self.singbox_rule_set_source = singbox_rule_set_source
-        self.singbox_ntp_server = singbox_ntp_server
-        self.singbox_clash_api_secret = singbox_clash_api_secret
+        self.tun_enabled = tun_enabled
         self.fetcher = RemoteSourceFetcher(timeout_seconds=timeout_seconds, user_agent=user_agent)
         self.lock = asyncio.Lock()
 
@@ -91,12 +87,7 @@ class RefreshService:
                 build_rule_profile([node.name for node in current], self.rule_profile),
             )
 
-            singbox_output = build_singbox_config(
-                [node.proxy for node in current],
-                rule_set_source=self.singbox_rule_set_source,
-                ntp_server=self.singbox_ntp_server,
-                clash_api_secret=self.singbox_clash_api_secret
-            )
+            singbox_output = build_singbox_config([node.proxy for node in current], tun_enabled=self.tun_enabled)
 
             published = not issues
             if published:
