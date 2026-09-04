@@ -48,7 +48,7 @@ class SubscriptionHttpServer:
         output = self.state.load_output()
         if not output:
             raise web.HTTPServiceUnavailable(text="subscription is not ready")
-        return web.Response(text=output, content_type="text/yaml; charset=utf-8")
+        return web.Response(text=output, content_type="text/yaml", charset="utf-8")
 
     async def handle_clash_subscription(self, request: web.Request) -> web.Response:
         token = request.match_info.get("token", "")
@@ -57,7 +57,7 @@ class SubscriptionHttpServer:
         output = self.state.load_output()
         if not output:
             raise web.HTTPServiceUnavailable(text="clash subscription is not ready")
-        return web.Response(text=output, content_type="text/yaml; charset=utf-8")
+        return web.Response(text=output, content_type="text/yaml", charset="utf-8")
 
     async def handle_singbox_subscription(self, request: web.Request) -> web.Response:
         token = request.match_info.get("token", "")
@@ -66,4 +66,4 @@ class SubscriptionHttpServer:
         output = self.state.load_singbox_output()
         if not output:
             raise web.HTTPServiceUnavailable(text="sing-box subscription is not ready")
-        return web.Response(text=output, content_type="application/json; charset=utf-8")
+        return web.Response(text=output, content_type="application/json", charset="utf-8")
