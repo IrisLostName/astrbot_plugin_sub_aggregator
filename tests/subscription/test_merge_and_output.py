@@ -12,6 +12,24 @@ def test_merge_tags_sources_and_deduplicates_by_connection():
     assert not removed
 
 
+def test_higher_priority_source_wins_duplicate_connection_when_processed_first():
+    high_priority_proxy = {
+        "name": "high-priority",
+        "type": "ss",
+        "server": "example.com",
+        "port": 443,
+        "cipher": "aes-128-gcm",
+        "password": "test",
+    }
+    low_priority_proxy = {**high_priority_proxy, "name": "low-priority"}
+
+    current, *_ = merge_nodes([("high", [high_priority_proxy]), ("low", [low_priority_proxy])])
+
+    assert len(current) == 1
+    assert current[0].source == "high"
+    assert current[0].name.startswith("[high]")
+
+
 def test_output_builds_referentially_complete_yaml():
     proxy = {"name": "[a]node", "type": "ss", "server": "example.com", "port": 443, "cipher": "aes-128-gcm", "password": "test"}
     output = build_mihomo_yaml([proxy])

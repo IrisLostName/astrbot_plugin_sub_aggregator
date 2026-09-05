@@ -22,6 +22,7 @@ from subagg.services.changes import format_change_message
 from subagg.services.refresh import RefreshReport, RefreshService
 from subagg.services.changes import format_change_message
 from subagg.sources.file_store import LocalFileStore
+from subagg.sources.ordering import sort_sources
 from subagg.state import StateStore
 
 
@@ -35,7 +36,7 @@ def subagg():
     pass
 
 
-@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML 和 sing-box JSON。", "0.4.0")
+@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML 和 sing-box JSON。", "0.4.2")
 class SubscriptionAggregatorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -345,7 +346,7 @@ class SubscriptionAggregatorPlugin(Star):
 
     def _sources(self) -> list[dict]:
         sources = [source for source in self.config.get("subscription_sources", []) if isinstance(source, dict)]
-        return sorted(sources, key=lambda source: int(source.get("priority", 100)))
+        return sort_sources(sources)
 
     @staticmethod
     def _is_local(source: dict) -> bool:

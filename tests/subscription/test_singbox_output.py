@@ -131,6 +131,7 @@ def test_config_uses_template_contract_and_manual_selector(vless_reality_proxy, 
         "default": "美国节点",
         "interrupt_exist_connections": True,
     }
+    assert sum(outbound["type"] == "selector" for outbound in config["outbounds"]) == 1
     assert {outbound["tag"] for outbound in config["outbounds"] if outbound["type"] in {"vless", "vmess"}} == {"美国节点", "香港节点"}
     assert {outbound["tag"] for outbound in config["outbounds"] if outbound["type"] == "direct"} == {"direct"}
     assert not any(outbound["type"] in {"urltest", "block"} for outbound in config["outbounds"])

@@ -23,6 +23,6 @@ Install the complete plugin tree under `AstrBot/data/plugins/astrbot_plugin_sub_
 The public subscription path is fixed to `/sub/<token>` and defaults to `https://sub.tomori.cloud`. Route that hostname to the local subscription HTTP service through Cloudflare Tunnel without the Bot email Access policy. The internal health path is fixed to `/sub/healthz` for Tunnel checks only.
 
 
-The default `metacubex` profile uses MetaCubeX MRS rule providers and boot-safe DNS. Use `minimal` only for diagnosis; it does not include the maintained DNS/rule profile.
+The default `metacubex` profile uses MetaCubeX MRS rule providers and boot-safe DNS, with one manually controlled `PROXY` select group. Use `minimal` only for diagnosis; it does not include the maintained DNS/rule profile.
 
 The old Egern-derived profile is not the default and is retained only as historical context.
