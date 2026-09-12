@@ -136,3 +136,35 @@ def test_vless_none_encryption_is_legacy_no_extra_encryption():
     raw = "vless://00000000-0000-0000-0000-000000000000@example.com:443?encryption=none"
     proxy = convert_share_link(raw, "node")
     assert "encryption" not in proxy
+
+
+def test_share_link_parser_preserves_raw_link_and_can_filter_invalid_link():
+    valid = "vless://00000000-0000-0000-0000-000000000000@example.com:443?security=none#valid"
+    invalid = "vless://id@example.com:443?flow=unknown#invalid"
+    strict = parse_source(f"{valid}\n{invalid}\n", "links")
+    filtered = parse_source(f"{valid}\n{invalid}\n", "links", filter_invalid_nodes=True)
+    assert strict.nodes[0].raw_link == valid
+    assert len(strict.issues) == 1
+    assert filtered.issues == []
+    assert [node.raw_link for node in filtered.nodes] == [valid]
+
+
+def test_yaml_parser_filter_invalid_nodes_skips_bad_entries():
+    result = parse_source(
+        """proxies:
+  - name: good
+    type: ss
+    server: example.com
+    port: 443
+    cipher: aes-128-gcm
+    password: test
+  - name: bad
+    type: ss
+    server: ""
+    port: 0
+""",
+        "yaml-source",
+        filter_invalid_nodes=True,
+    )
+    assert result.issues == []
+    assert [node.name for node in result.nodes] == ["good"]

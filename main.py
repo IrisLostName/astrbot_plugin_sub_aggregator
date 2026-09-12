@@ -20,7 +20,6 @@ if str(PLUGIN_ROOT) not in sys.path:
 from subagg.http_server import SubscriptionHttpServer
 from subagg.services.changes import format_change_message
 from subagg.services.refresh import RefreshReport, RefreshService
-from subagg.services.changes import format_change_message
 from subagg.sources.file_store import LocalFileStore
 from subagg.sources.ordering import sort_sources
 from subagg.state import StateStore
@@ -36,7 +35,7 @@ def subagg():
     pass
 
 
-@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML 和 sing-box JSON。", "0.4.2")
+@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML 和 sing-box JSON。", "2.0.0")
 class SubscriptionAggregatorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -52,6 +51,7 @@ class SubscriptionAggregatorPlugin(Star):
             timeout_seconds=int(config.get("request_timeout_seconds") or 20),
             rule_profile=str(config.get("rule_profile") or "metacubex"),
             tun_enabled=bool(config.get("singbox_tun_enable", True)),
+            source_base_dir=PLUGIN_ROOT,
         )
         self.http_server = SubscriptionHttpServer(
             self.state,
@@ -128,6 +128,7 @@ class SubscriptionAggregatorPlugin(Star):
             "订阅地址：\n"
             f"Clash/Mihomo：{base_url}/clash\n"
             f"sing-box：{base_url}/singbox\n"
+            f"Node List：{base_url}/node-list\n"
             f"兼容路径（Clash）：{base_url}"
         )
 
@@ -148,11 +149,13 @@ class SubscriptionAggregatorPlugin(Star):
             f"sing-box：纯 TUN（可在配置中开关），IPv4-only selector；Clash API 支持直连/规则/全局模式\n"
             f"本地 Mihomo YAML：{self.state.output_path}\n"
             f"本地 sing-box JSON：{self.state.singbox_output_path}\n"
+            f"本地 Node List：{self.state.node_list_output_path}\n"
             f"HTTP：{http_status}\n"
             f"HTTP 错误：{self._http_start_error or '无'}\n"
             f"内部监听：{self.config.get('http_host', '127.0.0.1')}:{self.config.get('http_port', 8077)}\n"
             f"Clash 订阅：{base_url}/clash\n"
             f"sing-box 订阅：{base_url}/singbox\n"
+            f"Node List：{base_url}/node-list\n"
             f"内部 health（仅 Tunnel）：{self.http_server.health_path}\n"
             f"自动刷新：{'运行中' if self._refresh_task and not self._refresh_task.done() else '已停止'}\n"
             f"下次刷新：{self._next_refresh_at or '未排程'}"
@@ -305,14 +308,17 @@ class SubscriptionAggregatorPlugin(Star):
         failed_sources = len({issue.source for issue in report.issues})
         mihomo_file = getattr(report, "output_file", str(self.state.output_path))
         singbox_file = getattr(report, "singbox_output_file", str(self.state.singbox_output_path))
+        node_list_file = getattr(report, "node_list_output_file", str(self.state.node_list_output_path))
         published_note = "" if report.published else "\n已保留上次成功输出。"
         base_url = self._public_subscription_url()
         sections.append(
             f"{reason}完成：总计 {len(report.nodes)} 个节点，{failed_sources} 个机场失败。"
             f"\n本地 Mihomo YAML：{mihomo_file}"
             f"\n本地 sing-box JSON：{singbox_file}"
+            f"\n本地 Node List：{node_list_file}"
             f"\nClash 订阅：{base_url}/clash"
             f"\nsing-box 订阅：{base_url}/singbox"
+            f"\nNode List：{base_url}/node-list"
             f"{published_note}"
         )
         change_message = format_change_message(

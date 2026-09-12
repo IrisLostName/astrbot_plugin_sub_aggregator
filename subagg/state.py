@@ -18,6 +18,7 @@ class StateStore:
         self.state_path = self.root / "state.json"
         self.output_path = self.root / "merged-subscription.yaml"
         self.singbox_output_path = self.root / "merged-subscription.singbox.json"
+        self.node_list_output_path = self.root / "merged-subscription.node-list.txt"
         self.metadata_path = self.root / "merged-subscription.metadata.json"
         self.log_path = self.root / "subagg.log"
 
@@ -33,7 +34,15 @@ class StateStore:
             if not isinstance(raw, dict):
                 continue
             try:
-                nodes.append(ParsedNode(source=str(raw["source"]), name=str(raw["name"]), proxy=dict(raw["proxy"]), fingerprint=str(raw.get("fingerprint", ""))))
+                nodes.append(
+                    ParsedNode(
+                        source=str(raw["source"]),
+                        name=str(raw["name"]),
+                        proxy=dict(raw["proxy"]),
+                        fingerprint=str(raw.get("fingerprint", "")),
+                        raw_link=str(raw["raw_link"]) if raw.get("raw_link") else None,
+                    )
+                )
             except (KeyError, TypeError, ValueError):
                 continue
         return nodes
@@ -50,6 +59,12 @@ class StateStore:
         except FileNotFoundError:
             return ""
 
+    def load_node_list_output(self) -> str:
+        try:
+            return self.node_list_output_path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
+
     def append_log(self, level: str, message: str, **details: Any) -> None:
         record = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -60,17 +75,29 @@ class StateStore:
         with self.log_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-    def save_success(self, mihomo_output: str, singbox_output: str, nodes: list[ParsedNode], *, source_count: int, issue_count: int) -> None:
+    def save_success(
+        self,
+        mihomo_output: str,
+        singbox_output: str,
+        nodes: list[ParsedNode],
+        *,
+        source_count: int,
+        issue_count: int,
+        node_list_output: str = "",
+    ) -> None:
         metadata = {
             "source_count": source_count,
             "node_count": len(nodes),
             "issue_count": issue_count,
             "mihomo_output_file": str(self.output_path),
-            "singbox_output_file": str(self.singbox_output_path)
+            "singbox_output_file": str(self.singbox_output_path),
+            "node_list_output_file": str(self.node_list_output_path),
+            "node_list_count": len([line for line in node_list_output.splitlines() if line.strip()]),
         }
         state = {"nodes": [asdict(node) for node in nodes], "metadata": metadata}
         self._atomic_write(self.output_path, mihomo_output)
         self._atomic_write(self.singbox_output_path, singbox_output)
+        self._atomic_write(self.node_list_output_path, node_list_output)
         self._atomic_write(self.metadata_path, json.dumps(metadata, ensure_ascii=False, indent=2))
         self._atomic_write(self.state_path, json.dumps(state, ensure_ascii=False, indent=2))
 

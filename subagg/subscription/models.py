@@ -26,6 +26,7 @@ class ParsedNode:
     name: str
     proxy: dict[str, Any]
     fingerprint: str = ""
+    raw_link: str | None = None
 
 
 @dataclass

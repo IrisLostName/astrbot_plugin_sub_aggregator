@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hmac
-from typing import Awaitable, Callable
 
 from aiohttp import web
 
@@ -27,6 +26,7 @@ class SubscriptionHttpServer:
         app.router.add_get(f"{self.path_prefix}/{{token}}", self.handle_subscription)
         app.router.add_get(f"{self.path_prefix}/{{token}}/clash", self.handle_clash_subscription)
         app.router.add_get(f"{self.path_prefix}/{{token}}/singbox", self.handle_singbox_subscription)
+        app.router.add_get(f"{self.path_prefix}/{{token}}/node-list", self.handle_node_list_subscription)
         app.router.add_get(f"{self.path_prefix}/test/singbox", self.handle_test_singbox_subscription)
         self._runner = web.AppRunner(app)
         await self._runner.setup()
@@ -42,32 +42,38 @@ class SubscriptionHttpServer:
     async def handle_health(self, request: web.Request) -> web.Response:
         return web.Response(status=204)
 
-    async def handle_subscription(self, request: web.Request) -> web.Response:
+    def _validate_token(self, request: web.Request) -> None:
         token = request.match_info.get("token", "")
         if not self.access_token or not hmac.compare_digest(token, self.access_token):
             raise web.HTTPNotFound()
+
+    async def handle_subscription(self, request: web.Request) -> web.Response:
+        self._validate_token(request)
         output = self.state.load_output()
         if not output:
             raise web.HTTPServiceUnavailable(text="subscription is not ready")
         return web.Response(text=output, content_type="text/yaml", charset="utf-8")
 
     async def handle_clash_subscription(self, request: web.Request) -> web.Response:
-        token = request.match_info.get("token", "")
-        if not self.access_token or not hmac.compare_digest(token, self.access_token):
-            raise web.HTTPNotFound()
+        self._validate_token(request)
         output = self.state.load_output()
         if not output:
             raise web.HTTPServiceUnavailable(text="clash subscription is not ready")
         return web.Response(text=output, content_type="text/yaml", charset="utf-8")
 
     async def handle_singbox_subscription(self, request: web.Request) -> web.Response:
-        token = request.match_info.get("token", "")
-        if not self.access_token or not hmac.compare_digest(token, self.access_token):
-            raise web.HTTPNotFound()
+        self._validate_token(request)
         output = self.state.load_singbox_output()
         if not output:
             raise web.HTTPServiceUnavailable(text="sing-box subscription is not ready")
         return web.Response(text=output, content_type="application/json", charset="utf-8")
+
+    async def handle_node_list_subscription(self, request: web.Request) -> web.Response:
+        self._validate_token(request)
+        output = self.state.load_node_list_output()
+        if not output:
+            raise web.HTTPServiceUnavailable(text="node list subscription is not ready")
+        return web.Response(text=output, content_type="text/plain", charset="utf-8")
 
     async def handle_test_singbox_subscription(self, request: web.Request) -> web.Response:
         output = self.state.load_singbox_output()
