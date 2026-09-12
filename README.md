@@ -2,7 +2,7 @@
 
 一个面向 AstrBot 的多来源代理订阅聚合插件。
 
-它可以读取远程订阅、本地文件和聊天上传文件，按内容识别 Clash/Mihomo YAML、Base64 订阅和常见分享链接，统一转换为 Mihomo/Clash YAML 与 sing-box 1.14 JSON，并通过本地 HTTP 服务提供订阅地址。
+它可以读取远程订阅、本地文件和聊天上传文件，按内容识别 Clash/Mihomo YAML、Base64 订阅和常见分享链接，统一转换为 Mihomo/Clash YAML、sing-box 1.14 JSON 与纯分享链接 Node List，并通过本地 HTTP 服务提供订阅地址。
 
 
 ## 功能概览

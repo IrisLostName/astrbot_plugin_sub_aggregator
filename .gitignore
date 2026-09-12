@@ -3,9 +3,26 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 *.log
 runtime/
 merged-subscription*
 *.latest
 *.metadata.json
 *.base64.txt
+
+# Local subscription files
+sub/
+local_sources/
+subscription.data
+*.uploaded-original.yaml
+
+# Local secrets and configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx

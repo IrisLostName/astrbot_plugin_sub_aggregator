@@ -35,7 +35,7 @@ def subagg():
     pass
 
 
-@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML 和 sing-box JSON。", "2.0.0")
+@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML、sing-box JSON 和纯分享链接 Node List。", "2.0.0")
 class SubscriptionAggregatorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
