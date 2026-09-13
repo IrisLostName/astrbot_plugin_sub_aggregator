@@ -35,7 +35,7 @@ def subagg():
     pass
 
 
-@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML、sing-box JSON 和纯分享链接 Node List。", "2.0.0")
+@register(PLUGIN_NAME, "chenh", "按内容识别并聚合订阅，输出 Mihomo/Clash YAML、sing-box JSON 和纯分享链接 Node List。", "2.0.1")
 class SubscriptionAggregatorPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
@@ -149,7 +149,7 @@ class SubscriptionAggregatorPlugin(Star):
             f"sing-box：纯 TUN（可在配置中开关），IPv4-only selector；Clash API 支持直连/规则/全局模式\n"
             f"本地 Mihomo YAML：{self.state.output_path}\n"
             f"本地 sing-box JSON：{self.state.singbox_output_path}\n"
-            f"本地 Node List：{self.state.node_list_output_path}\n"
+            f"本地 Node List：{self._node_list_output_path()}\n"
             f"HTTP：{http_status}\n"
             f"HTTP 错误：{self._http_start_error or '无'}\n"
             f"内部监听：{self.config.get('http_host', '127.0.0.1')}:{self.config.get('http_port', 8077)}\n"
@@ -308,7 +308,7 @@ class SubscriptionAggregatorPlugin(Star):
         failed_sources = len({issue.source for issue in report.issues})
         mihomo_file = getattr(report, "output_file", str(self.state.output_path))
         singbox_file = getattr(report, "singbox_output_file", str(self.state.singbox_output_path))
-        node_list_file = getattr(report, "node_list_output_file", str(self.state.node_list_output_path))
+        node_list_file = getattr(report, "node_list_output_file", str(self._node_list_output_path()))
         published_note = "" if report.published else "\n已保留上次成功输出。"
         base_url = self._public_subscription_url()
         sections.append(
@@ -357,6 +357,9 @@ class SubscriptionAggregatorPlugin(Star):
     @staticmethod
     def _is_local(source: dict) -> bool:
         return str(source.get("source_type") or "remote").lower() in {"local", "yaml", "upload", "local_file"}
+
+    def _node_list_output_path(self) -> Path:
+        return Path(getattr(self.state, "node_list_output_path", self.state.root / "merged-subscription.node-list.txt"))
 
     def _runtime_dir(self) -> Path:
         configured = os.environ.get("ASTRBOT_SUBAGG_RUNTIME_DIR") or str(self.config.get("runtime_dir") or "").strip()

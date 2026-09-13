@@ -139,14 +139,28 @@ class RefreshService:
 
             published = not issues
             if published:
-                self.state.save_success(
-                    mihomo_output,
-                    singbox_output,
-                    current,
-                    source_count=len(results),
-                    issue_count=len(issues),
-                    node_list_output=node_list_output,
-                )
+                try:
+                    self.state.save_success(
+                        mihomo_output,
+                        singbox_output,
+                        current,
+                        source_count=len(results),
+                        issue_count=len(issues),
+                        node_list_output=node_list_output,
+                    )
+                except TypeError as exc:
+                    if "node_list_output" not in str(exc):
+                        raise
+                    # Allow a hot-reloaded process with the pre-2.0 StateStore
+                    # class to publish the core outputs while it is recovering.
+                    self.state.save_success(
+                        mihomo_output,
+                        singbox_output,
+                        current,
+                        source_count=len(results),
+                        issue_count=len(issues),
+                    )
+                    self._node_list_output_path().write_text(node_list_output, encoding="utf-8")
                 self._append_log(
                     "info",
                     "refresh published",
@@ -158,7 +172,7 @@ class RefreshService:
                 self._append_log("warning", "refresh kept last success", node_count=len(current), issue_count=len(issues))
                 mihomo_output = self.state.load_output()
                 singbox_output = self.state.load_singbox_output()
-                node_list_output = self.state.load_node_list_output()
+                node_list_output = self._load_node_list_output()
 
             return RefreshReport(
                 output=mihomo_output,
@@ -171,7 +185,7 @@ class RefreshService:
                 issues=issues,
                 output_file=str(self.state.output_path),
                 singbox_output_file=str(self.state.singbox_output_path),
-                node_list_output_file=str(self.state.node_list_output_path),
+                node_list_output_file=str(self._node_list_output_path()),
                 published=published,
             )
 
@@ -204,6 +218,24 @@ class RefreshService:
             and not (include_pattern and not include_pattern.search(node.name))
         ]
         return result
+
+    def _node_list_output_path(self) -> Path:
+        return Path(
+            getattr(
+                self.state,
+                "node_list_output_path",
+                self.state.root / "merged-subscription.node-list.txt",
+            )
+        )
+
+    def _load_node_list_output(self) -> str:
+        loader = getattr(self.state, "load_node_list_output", None)
+        if callable(loader):
+            return loader()
+        try:
+            return self._node_list_output_path().read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
 
     def _append_log(self, level: str, message: str, **details: object) -> None:
         writer = getattr(self.state, "append_log", None)

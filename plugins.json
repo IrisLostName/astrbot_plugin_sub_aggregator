@@ -7,7 +7,7 @@
   "chenh/astrbot_plugin_sub_aggregator": {
     "author": "chenh",
     "name": "astrbot_plugin_sub_aggregator",
-    "version": "2.0.0",
+    "version": "2.0.1",
     "repo": "https://github.com/IrisLostName/astrbot_plugin_sub_aggregator",
     "desc": "按内容识别并聚合远程、本地和上传的订阅，输出 Mihomo/Clash YAML、sing-box JSON 和纯分享链接 Node List。",
     "display_name": "订阅聚合助手",
